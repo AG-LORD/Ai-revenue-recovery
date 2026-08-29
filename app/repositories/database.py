@@ -151,21 +151,81 @@ def init_db():
             """,
         )
 
-    # 3. Audit Trail Table (Immutable Decision Log)
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS audit_trail (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            case_id INTEGER,
-            payment_id TEXT,
-            actor TEXT NOT NULL,
-            action TEXT NOT NULL,
-            details TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY (case_id) REFERENCES recovery_cases(id)
-        );
-        """,
-    )
+        # 3. Audit Trail Table (Immutable Decision Log)
+    # Migrate legacy audit_trail schema from `timestamp` to `created_at`
+    cursor.execute("PRAGMA table_info(audit_trail)")
+    audit_columns = {col[1]: col[2] for col in cursor.fetchall()}
+
+    if "timestamp" in audit_columns:
+        cursor.execute("ALTER TABLE audit_trail RENAME TO audit_trail_old")
+
+        cursor.execute(
+            """
+            CREATE TABLE audit_trail (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                case_id INTEGER,
+                payment_id TEXT,
+                actor TEXT NOT NULL,
+                action TEXT NOT NULL,
+                details TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (case_id) REFERENCES recovery_cases(id)
+            );
+            """
+        )
+
+        if "created_at" in audit_columns:
+            cursor.execute(
+                """
+                INSERT INTO audit_trail (
+                    id, case_id, payment_id, actor, action, details, created_at
+                )
+                SELECT
+                    id,
+                    case_id,
+                    payment_id,
+                    actor,
+                    action,
+                    details,
+                    COALESCE(created_at, timestamp)
+                FROM audit_trail_old
+                """
+            )
+        else:
+            cursor.execute(
+                """
+                INSERT INTO audit_trail (
+                    id, case_id, payment_id, actor, action, details, created_at
+                )
+                SELECT
+                    id,
+                    case_id,
+                    payment_id,
+                    actor,
+                    action,
+                    details,
+                    timestamp
+                FROM audit_trail_old
+                """
+            )
+
+        cursor.execute("DROP TABLE audit_trail_old")
+
+    else:
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS audit_trail (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                case_id INTEGER,
+                payment_id TEXT,
+                actor TEXT NOT NULL,
+                action TEXT NOT NULL,
+                details TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (case_id) REFERENCES recovery_cases(id)
+            );
+            """
+        )
 
     conn.commit()
     conn.close()

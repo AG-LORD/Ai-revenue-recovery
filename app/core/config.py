@@ -14,10 +14,20 @@ RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID")
 RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET")
 RAZORPAY_WEBHOOK_SECRET = os.getenv("RAZORPAY_WEBHOOK_SECRET")
 
-# AI is deliberately template-only for this project. No external model is
-# configured or called, irrespective of the process environment.
-AI_ENABLED = False
-AI_PROVIDER = "template"
+# AI configuration
+AI_ENABLED = os.getenv("AI_ENABLED", "false").lower() == "true"
+AI_PROVIDER = os.getenv("AI_PROVIDER", "template")
+
+# NVIDIA NIM configuration
+NIM_API_KEY = os.getenv("NIM_API_KEY")
+NIM_MODEL = os.getenv(
+    "NIM_MODEL",
+    "nvidia/nemotron-3.5-lightning-30b-a3b",
+)
+NIM_BASE_URL = os.getenv(
+    "NIM_BASE_URL",
+    "https://integrate.api.nvidia.com/v1",
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FRONTEND_DIR = PROJECT_ROOT / "frontend"

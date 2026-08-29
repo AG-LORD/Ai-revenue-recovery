@@ -20,11 +20,18 @@ def _fingerprint(path: Path) -> tuple[int, str]:
     return path.stat().st_size, hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _fingerprint_if_present(path: Path) -> tuple[int, str] | None:
+    """Return a fingerprint only for an existing production database."""
+    if not path.exists():
+        return None
+    return _fingerprint(path)
+
+
 def pytest_configure() -> None:
     """Redirect imports that initialize the database before test collection."""
     global _TEST_DATABASE_DIRECTORY, _PRODUCTION_DATABASE_FINGERPRINT, _ORIGINAL_DATABASE_PATH
     _TEST_DATABASE_DIRECTORY = Path(tempfile.mkdtemp(prefix="ai-revenue-recovery-pytest-"))
-    _PRODUCTION_DATABASE_FINGERPRINT = _fingerprint(PRODUCTION_DATABASE_PATH)
+    _PRODUCTION_DATABASE_FINGERPRINT = _fingerprint_if_present(PRODUCTION_DATABASE_PATH)
     _ORIGINAL_DATABASE_PATH = os.environ.get("DATABASE_PATH")
     os.environ["DATABASE_PATH"] = str(_TEST_DATABASE_DIRECTORY / "collection.db")
 
@@ -44,9 +51,10 @@ def isolated_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     """Fail the run if a test modified the user's production database."""
     try:
-        assert _PRODUCTION_DATABASE_FINGERPRINT == _fingerprint(PRODUCTION_DATABASE_PATH), (
-            "Tests modified the production revenue_recovery.db"
-        )
+        if _PRODUCTION_DATABASE_FINGERPRINT is not None:
+            assert _PRODUCTION_DATABASE_FINGERPRINT == _fingerprint_if_present(PRODUCTION_DATABASE_PATH), (
+                "Tests modified the production revenue_recovery.db"
+            )
     finally:
         if _ORIGINAL_DATABASE_PATH is None:
             os.environ.pop("DATABASE_PATH", None)

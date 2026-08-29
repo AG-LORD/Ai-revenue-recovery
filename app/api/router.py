@@ -254,7 +254,29 @@ async def razorpay_webhook(request: Request):
             response["recovery_result"] = rec["status"]
         return response
     elif event == "payment_link.paid":
-        rec_case, matched = process_recovery_success_event(event, data)
+        payment = data.get("payload", {}).get("payment", {}).get("entity", {})
+        payment_link = data.get("payload", {}).get("payment_link", {}).get("entity", {})
+        payment_id = payment.get("id")
+        if not event_id:
+            event_id = f"event_{event}_{payment_id or payment_link.get('id')}"
+        if not record_webhook_event(event_id=event_id, event_type=event, payload_dict=data, status="PROCESSING"):
+            add_audit_log(
+                payment_id=payment_id,
+                actor="SYSTEM",
+                action="DUPLICATE_WEBHOOK_IGNORED",
+                details=f"Received duplicate webhook event '{event_id}'. Skipped processing.",
+            )
+            return {"status": "ignored", "message": "Duplicate event already processed", "event_id": event_id}
+        try:
+            rec_case, matched = process_recovery_success_event(event, data)
+        except Exception:
+            release_processing_webhook_event(event_id)
+            logger.exception("Failed to process payment_link.paid webhook event %s", event_id)
+            return JSONResponse(
+                status_code=500,
+                content={"status": "error", "message": "Webhook processing failed; retry accepted", "event_id": event_id},
+            )
+        update_webhook_event_status(event_id, "PROCESSED")
         return {"status": "ok", "recovered": matched, "case": rec_case}
     else:
         return {"status": "error", "message": "Unhandled event type"}

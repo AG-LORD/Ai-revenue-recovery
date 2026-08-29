@@ -1,0 +1,29 @@
+# IDE / IntelliJ
+/shelf/
+/workspace.xml
+/httpRequests/
+/queries/
+/dataSources/
+/dataSources.local.xml
+.idea/
+
+# Python
+venv/
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# Environment / secrets
+.env
+
+# Local databases and backups
+*.db
+*.db-shm
+*.db-wal
+*.backup
+*.backup_*
+
+# Temporary Codex/debug scripts
+debug_*.py
+update_*.py

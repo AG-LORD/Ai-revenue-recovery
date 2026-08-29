@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <title>Razorpay Test Checkout</title>
+
+    <!-- Razorpay Checkout SDK -->
+    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        background: #f5f5f5;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        margin: 0;
+      }
+
+      .card {
+        background: white;
+        width: 350px;
+        padding: 30px;
+        border-radius: 12px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+        text-align: center;
+      }
+
+      h1 {
+        margin-bottom: 10px;
+      }
+
+      .price {
+        font-size: 32px;
+        font-weight: bold;
+        margin: 20px 0;
+      }
+
+      button {
+        width: 100%;
+        padding: 14px;
+        border: none;
+        border-radius: 8px;
+        background: #3399cc;
+        color: white;
+        font-size: 16px;
+        cursor: pointer;
+      }
+
+      button:hover {
+        opacity: 0.9;
+      }
+
+      .test-label {
+        margin-top: 15px;
+        font-size: 13px;
+        color: #777;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="card">
+      <h1>Test Store</h1>
+
+      <p>Premium Shoes</p>
+
+      <div class="price">₹500</div>
+
+      <button id="pay-button" onclick="openCheckout()">Pay ₹500</button>
+
+      <div
+        id="status-msg"
+        style="margin-top: 10px; font-size: 13px; color: #555; display: none"
+      ></div>
+
+      <div class="test-label">Razorpay Test Mode</div>
+    </div>
+
+    <script>
+      async function openCheckout() {
+        const btn = document.getElementById("pay-button");
+        const statusMsg = document.getElementById("status-msg");
+
+        try {
+          btn.disabled = true;
+          btn.innerText = "Creating Order...";
+          statusMsg.style.display = "block";
+          statusMsg.innerText = "Requesting secure order from backend...";
+
+          // Determine API base URL (handles both localhost:8000 and direct file://)
+          const apiBase = window.location.origin.includes("http")
+            ? window.location.origin
+            : "http://localhost:8000";
+
+          const response = await fetch(`${apiBase}/api/create-order`, {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+          });
+
+          if (!response.ok) {
+            throw new Error("Failed to create order on server");
+          }
+
+          const order = await response.json();
+
+          statusMsg.innerText = `Order created: ${order.order_id}`;
+
+          var options = {
+            key: order.key_id,
+            amount: order.amount,
+            currency: order.currency,
+            name: "AI Revenue Recovery Demo",
+            description: "Test Purchase",
+            order_id: order.order_id,
+            handler: function (response) {
+              console.log("Payment successful!", response);
+              alert(
+                "Payment successful!\n\n" +
+                  "Payment ID: " +
+                  response.razorpay_payment_id +
+                  "\n" +
+                  "Order ID: " +
+                  response.razorpay_order_id,
+              );
+              btn.disabled = false;
+              btn.innerText = "Pay ₹500";
+              statusMsg.innerText = "Payment completed!";
+            },
+            modal: {
+              ondismiss: function () {
+                console.log("Checkout modal dismissed / cancelled by user");
+                btn.disabled = false;
+                btn.innerText = "Pay ₹500";
+                statusMsg.innerText = "Payment window was closed.";
+              },
+            },
+            prefill: {
+              name: "Test Customer",
+              email: "test@example.com",
+              contact: "9999999999",
+            },
+            theme: {
+              color: "#3399cc",
+            },
+          };
+
+          var rzp = new Razorpay(options);
+          rzp.open();
+        } catch (error) {
+          console.error("Error launching checkout:", error);
+          alert("Error creating order: " + error.message);
+          btn.disabled = false;
+          btn.innerText = "Pay ₹500";
+          statusMsg.innerText =
+            "Error creating order. Make sure backend is running on port 8000.";
+        }
+      }
+    </script>
+  </body>
+</html>

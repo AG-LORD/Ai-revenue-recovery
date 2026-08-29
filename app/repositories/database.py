@@ -204,6 +204,27 @@ def record_webhook_event(event_id: str, event_type: str, payload_dict: dict, sta
         conn.close()
 
 
+def update_webhook_event_status(event_id: str, status: str) -> None:
+    """Update the status of an already-reserved webhook event."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE webhook_events SET status = ? WHERE event_id = ?", (status, event_id))
+    conn.commit()
+    conn.close()
+
+
+def release_processing_webhook_event(event_id: str) -> None:
+    """Release a failed processing reservation so the gateway can retry it."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "DELETE FROM webhook_events WHERE event_id = ? AND status = 'PROCESSING'",
+        (event_id,),
+    )
+    conn.commit()
+    conn.close()
+
+
 def add_audit_log(payment_id: str, actor: str, action: str, details: str, case_id: int = None):
     """Append an immutable log entry to the audit_trail table.
     Actors can be: 'SYSTEM', 'DIAGNOSIS_RULE', 'POLICY_GATE', 'AI_AGENT', 'RECOVERY_ENGINE'.
@@ -268,7 +289,7 @@ def create_or_get_recovery_case(payment: dict, diagnosis: dict) -> tuple[dict, b
             payment_link_id, payment_link_url, ai_explanation, customer_message,
             recovered_amount, created_at, updated_at
         ) VALUES (
-            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         )
     """, (
         payment_id,

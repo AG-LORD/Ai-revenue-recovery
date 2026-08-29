@@ -18,6 +18,8 @@ from app.services.workflow_service import process_failed_payment
 # Repository functions (database layer)
 from app.repositories.database import (
     record_webhook_event,
+    update_webhook_event_status,
+    release_processing_webhook_event,
     add_audit_log,
     get_all_recovery_cases,
     get_audit_trail_for_case,
@@ -218,7 +220,7 @@ async def razorpay_webhook(request: Request):
         payment_id = payment.get("id")
         if not event_id:
             event_id = f"event_{event}_{payment_id}"
-        if not record_webhook_event(event_id=event_id, event_type=event, payload_dict=data, status="PROCESSED"):
+        if not record_webhook_event(event_id=event_id, event_type=event, payload_dict=data, status="PROCESSING"):
             add_audit_log(
                 payment_id=payment_id,
                 actor="SYSTEM",
@@ -226,7 +228,16 @@ async def razorpay_webhook(request: Request):
                 details=f"Received duplicate webhook event '{event_id}'. Skipped processing.",
             )
             return {"status": "ignored", "message": "Duplicate event already processed", "event_id": event_id}
-        outcome = process_failed_payment(payment, razorpay_client)
+        try:
+            outcome = process_failed_payment(payment, razorpay_client)
+        except Exception:
+            release_processing_webhook_event(event_id)
+            logger.exception("Failed to process payment.failed webhook event %s", event_id)
+            return JSONResponse(
+                status_code=500,
+                content={"status": "error", "message": "Webhook processing failed; retry accepted", "event_id": event_id},
+            )
+        update_webhook_event_status(event_id, "PROCESSED")
         case = outcome["case"]
         pol = outcome["policy"]
         rec = outcome["recovery"]

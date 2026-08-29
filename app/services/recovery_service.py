@@ -12,7 +12,7 @@ import logging
 from typing import Any, Dict
 
 # Local imports
-from app.integrations.razorpay_client import PaymentGateway
+from app.integrations.razorpay_client import PaymentGateway, PaymentGatewayUnavailable
 from app.repositories import database
 
 
@@ -117,11 +117,32 @@ def execute_recovery_action(case: Dict[str, Any], razorpay_client: PaymentGatewa
             plink = razorpay_client.create_payment_link(link_payload)
             plink_id = plink.get("id")
             plink_url = plink.get("short_url")
-        except Exception:
+        except PaymentGatewayUnavailable:
             # Simulation remains deterministic and never retries a gateway call.
-            logger.warning("Payment-link creation failed for case %s; using demo link", case_id)
+            logger.warning("Payment gateway unavailable for case %s; using demo link", case_id)
             plink_id = f"plink_simulated_{case_id}"
             plink_url = f"https://rzp.io/i/simulated_{case_id}"
+        except Exception as exc:
+            logger.exception("Payment-link creation failed for case %s", case_id)
+            updated_case = database.update_case_recovery_action(
+                case_id=case_id,
+                payment_id=payment_id,
+                recovery_status="ESCALATED",
+                action_result=f"PAYMENT_LINK_CREATION_FAILED: {type(exc).__name__}",
+            )
+            database.add_audit_log(
+                payment_id=payment_id,
+                case_id=case_id,
+                actor="RECOVERY_ENGINE",
+                action="PAYMENT_LINK_CREATION_FAILED",
+                details="Payment link could not be created; case escalated for manual review.",
+            )
+            return {
+                "action": "send_payment_reminder",
+                "status": "escalated",
+                "message": "Payment link creation failed. Escalated to manual review.",
+                "case": updated_case,
+            }
 
         # Update DB with link details
         updated_case = database.update_case_recovery_action(

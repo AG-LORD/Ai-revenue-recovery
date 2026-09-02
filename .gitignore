@@ -32,3 +32,5 @@ update_*.py
 *.before_schema_fix
 # Local demo database backup
 *.before_clean_demo
+
+cases.json

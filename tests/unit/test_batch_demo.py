@@ -1,9 +1,17 @@
 import inspect
+from unittest.mock import patch
 
 from app.integrations.razorpay_client import UnavailableRazorpayClient
 from app.repositories import database
 from app.services.workflow_service import process_failed_payment
 from scripts import run_batch_demo
+
+
+def fake_nim_response(*args, **kwargs):
+    return {
+        "explanation": "Payment failure analyzed using the approved recovery policy.",
+        "customer_message": "Please complete your payment using the provided payment link.",
+    }
 
 
 def test_generator_is_deterministic_and_has_fifty_recognized_events() -> None:
@@ -25,22 +33,35 @@ def test_generator_does_not_insert_database_records_directly() -> None:
     assert "sqlite" not in source.lower()
 
 
-def test_batch_processes_through_workflow_and_calculates_persisted_metrics() -> None:
-    report = run_batch_demo.process_batch(run_batch_demo.generate_synthetic_failures())
+@patch("app.services.ai_service._generate_with_nim", side_effect=fake_nim_response)
+def test_batch_processes_through_workflow_and_calculates_persisted_metrics(
+    mock_nim,
+) -> None:
+    report = run_batch_demo.process_batch(
+        run_batch_demo.generate_synthetic_failures()
+    )
     cases = database.get_all_recovery_cases()
 
     assert report["payments_processed"] == 50
     assert report["payments_processed"] == len(cases)
     assert sum(report["diagnosis_counts"].values()) == 50
     assert report["revenue_at_risk"] == sum(case["amount"] for case in cases)
-    assert report["revenue_recovered"] == sum(case["recovered_amount"] for case in cases)
-    assert report["successful_recoveries"] == sum(case["recovery_status"] == "RECOVERED" for case in cases)
+    assert report["revenue_recovered"] == sum(
+        case["recovered_amount"] for case in cases
+    )
+    assert report["successful_recoveries"] == sum(
+        case["recovery_status"] == "RECOVERED" for case in cases
+    )
     assert report["revenue_recovered"] <= report["revenue_at_risk"]
     assert report["recovery_rate"] <= 100.0
     assert report["audit_events"] > 0
 
+    # Make sure the batch test did not accidentally call real NIM.
+    assert mock_nim.call_count == 50
 
-def test_reset_demo_records_preserves_unrelated_cases() -> None:
+
+@patch("app.services.ai_service._generate_with_nim", side_effect=fake_nim_response)
+def test_reset_demo_records_preserves_unrelated_cases(mock_nim) -> None:
     unrelated_payment = {
         "id": "unrelated_payment",
         "order_id": "unrelated_order",
@@ -50,11 +71,25 @@ def test_reset_demo_records_preserves_unrelated_cases() -> None:
         "error_step": "payment_authorization",
         "error_description": "Temporary issue with the issuing bank.",
     }
-    process_failed_payment(unrelated_payment, UnavailableRazorpayClient())
-    run_batch_demo.process_batch(run_batch_demo.generate_synthetic_failures())
+
+    process_failed_payment(
+        unrelated_payment,
+        UnavailableRazorpayClient(),
+    )
+
+    run_batch_demo.process_batch(
+        run_batch_demo.generate_synthetic_failures()
+    )
 
     removed = run_batch_demo.reset_demo_records()
 
     assert removed["recovery_cases"] == 50
     assert database.get_case_by_payment_id("unrelated_payment") is not None
-    assert not [case for case in database.get_all_recovery_cases() if case["payment_id"].startswith("demo_batch_v1_")]
+    assert not [
+        case
+        for case in database.get_all_recovery_cases()
+        if case["payment_id"].startswith("demo_batch_v1_")
+    ]
+
+    # 1 unrelated case + 50 demo cases.
+    assert mock_nim.call_count == 51

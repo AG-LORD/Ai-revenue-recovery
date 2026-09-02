@@ -54,7 +54,7 @@ def test_cancellation_can_only_create_customer_initiated_link() -> None:
         }
     )
 
-    fake_gemini_output = {
+    fake_nim_output = {
         "explanation": (
             "The customer cancelled checkout, so a payment link "
             "is permitted."
@@ -67,8 +67,8 @@ def test_cancellation_can_only_create_customer_initiated_link() -> None:
 
     # Mock Gemini so unit tests never make a real API request.
     with patch(
-        "app.services.ai_service._generate_with_gemini",
-        return_value=fake_gemini_output,
+        "app.services.ai_service._generate_with_nim",
+        return_value=fake_nim_output,
     ):
         insight = generate_ai_recovery_insights(
             {"amount": 500},
@@ -82,7 +82,7 @@ def test_cancellation_can_only_create_customer_initiated_link() -> None:
 
     # Gemini generated the communication.
     assert insight["ai_generated"] is True
-    assert insight["provider"] == "gemini"
+    assert insight["provider"] == "nim"
 
     # Gemini cannot change the financial decision.
     assert insight["recommended_action"] == "send_payment_reminder"
@@ -105,8 +105,8 @@ def test_gemini_failure_falls_back_to_deterministic_template() -> None:
     )
 
     with patch(
-        "app.services.ai_service._generate_with_gemini",
-        side_effect=RuntimeError("Gemini unavailable"),
+        "app.services.ai_service._generate_with_nim",
+        side_effect=RuntimeError("NIM unavailable"),
     ):
         insight = generate_ai_recovery_insights(
             {"amount": 500},
@@ -127,11 +127,11 @@ def test_gemini_failure_falls_back_to_deterministic_template() -> None:
     assert insight["safety_validated"] is True
     assert "automatically charging" not in insight["customer_message"].lower()
 def test_ai_configuration_uses_gemini() -> None:
-    from app.core.config import GEMINI_MODEL
+    from app.core.config import NIM_MODEL
 
     assert AI_ENABLED is True
-    assert AI_PROVIDER == "gemini"
-    assert GEMINI_MODEL == "gemini-3.6-flash"
+    assert AI_PROVIDER == "nim"
+    assert NIM_MODEL == "nvidia/nemotron-3.5-lightning-30b-a3b"
 
 
 def test_monetary_values_stored_as_paisa_without_floating_point_error():

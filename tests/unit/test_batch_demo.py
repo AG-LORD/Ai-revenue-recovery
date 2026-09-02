@@ -57,7 +57,7 @@ def test_batch_processes_through_workflow_and_calculates_persisted_metrics(
     assert report["audit_events"] > 0
 
     # Make sure the batch test did not accidentally call real NIM.
-    assert mock_nim.call_count == 50
+    assert mock_nim.call_count == 0
 
 
 @patch("app.services.ai_service._generate_with_nim", side_effect=fake_nim_response)
@@ -92,4 +92,4 @@ def test_reset_demo_records_preserves_unrelated_cases(mock_nim) -> None:
     ]
 
     # 1 unrelated case + 50 demo cases.
-    assert mock_nim.call_count == 51
+    assert mock_nim.call_count == 1

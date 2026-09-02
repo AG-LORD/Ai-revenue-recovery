@@ -14,6 +14,7 @@ from app.core.config import RAZORPAY_KEY_ID, RAZORPAY_WEBHOOK_SECRET
 # Services
 from app.services.recovery_service import process_recovery_success_event
 from app.services.workflow_service import process_failed_payment
+from scripts import run_batch_demo
 
 # Repository functions (database layer)
 from app.repositories.database import (
@@ -36,6 +37,27 @@ async def health():
 @router.get("/api/metrics")
 async def api_metrics():
     return get_recovery_metrics()
+
+@router.post("/api/demo/run-batch")
+async def run_batch_demo_api():
+    """Run the deterministic 50-payment batch demo through the normal workflow."""
+    try:
+        events = run_batch_demo.generate_synthetic_failures()
+        report = run_batch_demo.process_batch(events)
+        return {
+            "status": "ok",
+            "message": "50-payment recovery batch completed",
+            "report": report,
+        }
+    except Exception:
+        logger.exception("Batch demo failed")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "message": "Batch demo failed",
+            },
+        )
 
 @router.get("/api/cases")
 async def list_api_cases():

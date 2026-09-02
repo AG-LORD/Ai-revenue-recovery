@@ -2,6 +2,8 @@
 
 import json
 import logging
+import re
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from openai import OpenAI
@@ -36,6 +38,40 @@ def _validate(content: str, policy: dict[str, Any]) -> bool:
         )
 
     return True
+
+
+def _has_invented_payment_details(
+    content: str,
+    case: dict[str, Any],
+    payment_link: str | None,
+) -> bool:
+    """Reject common invented payment facts from optional AI communication."""
+    if "refund" in content.lower():
+        return True
+
+    expected_link = payment_link or case.get("payment_link_url")
+    links = re.findall(r"https?://[^\s<>()]+", content)
+    if any(link.rstrip(".,!?;:") != expected_link for link in links):
+        return True
+
+    try:
+        expected_amount = Decimal(str(case.get("amount", 0))).quantize(Decimal("0.01"))
+    except (InvalidOperation, ValueError):
+        return True
+
+    amounts = re.findall(
+        r"(?:₹|rs\.?|inr|\$)\s*([0-9][0-9,]*(?:\.\d{1,2})?)",
+        content,
+        flags=re.IGNORECASE,
+    )
+    for amount in amounts:
+        try:
+            if Decimal(amount.replace(",", "")).quantize(Decimal("0.01")) != expected_amount:
+                return True
+        except InvalidOperation:
+            return True
+
+    return False
 
 
 def _template_response(
@@ -279,6 +315,16 @@ def generate_ai_recovery_insights(
         safety_validated = (
             _validate(explanation, policy)
             and _validate(customer_message, policy)
+            and not _has_invented_payment_details(
+                explanation,
+                case,
+                payment_link,
+            )
+            and not _has_invented_payment_details(
+                customer_message,
+                case,
+                payment_link,
+            )
         )
 
         if not safety_validated:

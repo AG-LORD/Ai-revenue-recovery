@@ -416,6 +416,31 @@ def get_all_recovery_cases():
         row['amount'] = row['amount'] / 100.0
         row['recovered_amount'] = row['recovered_amount'] / 100.0
     return rows
+def reset_batch_demo_cases(prefix: str = "demo_batch_v1_") -> None:
+    """Remove only synthetic batch-demo cases and their audit entries."""
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT id FROM recovery_cases WHERE payment_id LIKE ?",
+        (f"{prefix}%",),
+    )
+    case_ids = [row["id"] for row in cursor.fetchall()]
+
+    if case_ids:
+        placeholders = ",".join("?" * len(case_ids))
+        cursor.execute(
+            f"DELETE FROM audit_trail WHERE case_id IN ({placeholders})",
+            case_ids,
+        )
+
+    cursor.execute(
+        "DELETE FROM recovery_cases WHERE payment_id LIKE ?",
+        (f"{prefix}%",),
+    )
+
+    conn.commit()
+    conn.close()
 def get_case_by_payment_id(payment_id: str):
     conn = get_connection()
     cursor = conn.cursor()
@@ -625,6 +650,9 @@ def get_recovery_metrics() -> dict:
             COUNT(id) as total_cases,
             COALESCE(SUM(CASE WHEN recovery_status = 'RECOVERED' THEN 1 ELSE 0 END), 0) as recovered_cases,
             COALESCE(SUM(CASE WHEN recovery_status = 'ESCALATED' THEN 1 ELSE 0 END), 0) as escalated_cases,
+            COALESCE(SUM(CASE WHEN action_taken = 'retry_payment' THEN 1 ELSE 0 END), 0) as retry_actions,
+            COALESCE(SUM(CASE WHEN action_taken = 'send_payment_reminder' THEN 1 ELSE 0 END), 0) as reminder_actions,
+            COALESCE(SUM(CASE WHEN action_taken = 'escalate_manual_review' THEN 1 ELSE 0 END), 0) as manual_escalations,
             COALESCE(SUM(CASE WHEN recovery_status IN ('DETECTED', 'PENDING_RETRY', 'PENDING_REMINDER', 'LINK_CREATED') THEN 1 ELSE 0 END), 0) as pending_cases
         FROM recovery_cases
     """)
@@ -641,5 +669,8 @@ def get_recovery_metrics() -> dict:
         "total_cases": int(row["total_cases"]),
         "recovered_cases": int(row["recovered_cases"]),
         "escalated_cases": int(row["escalated_cases"]),
+        "retry_actions": int(row["retry_actions"]),
+        "reminder_actions": int(row["reminder_actions"]),
+        "manual_escalations": int(row["manual_escalations"]),
         "pending_cases": int(row["pending_cases"]),
     }

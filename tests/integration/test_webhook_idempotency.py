@@ -99,3 +99,51 @@ def test_payment_link_paid_webhook_is_processed_once(monkeypatch) -> None:
     ).fetchone()
     conn.close()
     assert recovered_events["count"] == 1
+
+
+def test_payment_link_paid_with_a_new_event_id_does_not_recover_twice(monkeypatch) -> None:
+    from main import app
+    from app.repositories import database
+
+    app.state.razorpay_client = VerifiedGateway()
+    client = TestClient(app)
+    payment = {"id": "pay_original_second_guard", "order_id": "order_second_guard", "amount": 5000, "currency": "INR"}
+    diagnosis = {
+        "category": "customer_cancelled",
+        "diagnosis": "Customer cancelled checkout.",
+        "recoverable": True,
+        "recommended_action": "send_payment_reminder",
+        "max_retries": 0,
+    }
+    case, created = database.create_or_get_recovery_case(payment, diagnosis)
+    assert created is True
+    database.update_case_recovery_action(
+        case_id=case["id"],
+        payment_id=payment["id"],
+        recovery_status="LINK_CREATED",
+        action_result="PAYMENT_LINK_CREATED",
+        payment_link_id="plink_second_guard",
+        payment_link_url="https://rzp.io/i/second-guard",
+    )
+    event = {
+        "id": "evt_link_paid_second_guard_one",
+        "event": "payment_link.paid",
+        "payload": {
+            "payment_link": {"entity": {"id": "plink_second_guard", "amount_paid": 5000}},
+            "payment": {"entity": {"id": "pay_recovered_second_guard", "order_id": "order_second_guard", "amount": 5000}},
+        },
+    }
+
+    first_response = client.post("/webhook/razorpay", json=event, headers={"X-Razorpay-Signature": "valid"})
+    event["id"] = "evt_link_paid_second_guard_two"
+    second_response = client.post("/webhook/razorpay", json=event, headers={"X-Razorpay-Signature": "valid"})
+
+    assert first_response.json()["recovered"] is True
+    assert second_response.json()["recovered"] is False
+    conn = database.get_connection()
+    recovered_events = conn.execute(
+        "SELECT COUNT(*) AS count FROM audit_trail WHERE payment_id = ? AND action = 'REVENUE_RECOVERED'",
+        (payment["id"],),
+    ).fetchone()
+    conn.close()
+    assert recovered_events["count"] == 1

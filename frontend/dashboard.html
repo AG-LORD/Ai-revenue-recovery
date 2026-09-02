@@ -198,6 +198,29 @@
         margin-top: 4px;
       }
 
+      /* Recovery Journey */
+      .journey-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 20px 22px;
+        margin-bottom: 24px;
+      }
+      .journey-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 18px; flex-wrap: wrap; }
+      .journey-title { font-size: 16px; font-weight: 700; }
+      .journey-subtitle { color: var(--text-muted); font-size: 12px; margin-top: 4px; }
+      .journey-flow { color: var(--accent-blue); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; }
+      .funnel-grid { display: grid; grid-template-columns: repeat(5, minmax(135px, 1fr)); gap: 10px; align-items: stretch; }
+      .funnel-step { position: relative; background: rgba(15, 23, 42, 0.5); border: 1px solid var(--border-color); border-radius: 9px; padding: 14px; }
+      .funnel-step:not(:last-child)::after { content: "→"; position: absolute; right: -16px; top: 50%; transform: translateY(-50%); color: var(--text-muted); font-size: 18px; z-index: 1; }
+      .funnel-label { color: var(--text-muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.35px; }
+      .funnel-count { color: var(--text-primary); font-size: 25px; font-weight: 800; margin-top: 7px; }
+      .funnel-rate { color: var(--text-muted); font-size: 11px; margin-top: 3px; }
+      .funnel-step.recovered { border-color: rgba(74, 222, 128, 0.45); }
+      .funnel-step.recovered .funnel-count { color: var(--accent-green); }
+      .funnel-step.escalated .funnel-count { color: var(--accent-amber); }
+      @media (max-width: 900px) { .funnel-grid { grid-template-columns: repeat(2, minmax(135px, 1fr)); } .funnel-step:not(:last-child)::after { display: none; } }
+
       /* Simulation Controls Banner */
       .sim-banner {
         background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
@@ -396,6 +419,106 @@
         overflow-y: auto;
       }
 
+      .ai-intelligence {
+        background: rgba(56, 189, 248, 0.06);
+        border: 1px solid rgba(56, 189, 248, 0.28);
+        border-radius: 10px;
+        padding: 16px;
+        margin-bottom: 22px;
+      }
+
+      .ai-intelligence-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+
+      .ai-intelligence-title {
+        font-size: 14px;
+        font-weight: 700;
+        color: var(--accent-blue);
+      }
+
+      .ai-control-badge {
+        color: var(--accent-green);
+        border: 1px solid rgba(74, 222, 128, 0.35);
+        background: rgba(74, 222, 128, 0.1);
+        border-radius: 999px;
+        padding: 4px 9px;
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.35px;
+      }
+
+      .ai-facts {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+        margin-bottom: 14px;
+      }
+
+      .ai-fact {
+        background: rgba(15, 23, 42, 0.45);
+        border: 1px solid var(--border-color);
+        border-radius: 7px;
+        padding: 9px 10px;
+        min-width: 0;
+      }
+
+      .ai-fact-label {
+        color: var(--text-muted);
+        display: block;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+        margin-bottom: 4px;
+      }
+
+      .ai-fact-value {
+        color: var(--text-primary);
+        display: block;
+        font-size: 12px;
+        font-weight: 700;
+        overflow-wrap: anywhere;
+      }
+
+      .ai-copy-block {
+        border-top: 1px solid var(--border-color);
+        padding-top: 11px;
+        margin-top: 11px;
+      }
+
+      .ai-copy-label {
+        color: var(--text-muted);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.4px;
+        text-transform: uppercase;
+      }
+
+      .ai-copy-text {
+        color: var(--text-primary);
+        font-size: 12px;
+        line-height: 1.5;
+        margin-top: 5px;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+
+      @media (max-width: 620px) {
+        .ai-facts {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .ai-intelligence-header {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+      }
+
       .close-btn {
         background: none;
         border: none;
@@ -562,16 +685,39 @@
         </div>
       </div>
 
+      <!-- Recovery Journey -->
+      <section class="journey-card" aria-labelledby="journey-title">
+        <div class="journey-header">
+          <div>
+            <h2 class="journey-title" id="journey-title">Recovery Journey</h2>
+            <p class="journey-subtitle">From a failed payment to a policy-safe recovery outcome.</p>
+          </div>
+          <div class="journey-flow">Failure detected → Diagnosis → Policy decision → Recovery action → Revenue recovered</div>
+        </div>
+        <div class="funnel-grid">
+          <div class="funnel-step"><div class="funnel-label">Failed payments</div><div class="funnel-count" id="funnel-failed">0</div><div class="funnel-rate" id="funnel-failed-rate">No cases yet</div></div>
+          <div class="funnel-step"><div class="funnel-label">Bounded retries</div><div class="funnel-count" id="funnel-retries">0</div><div class="funnel-rate" id="funnel-retries-rate">0.0% of failures</div></div>
+          <div class="funnel-step"><div class="funnel-label">Payment links / reminders</div><div class="funnel-count" id="funnel-reminders">0</div><div class="funnel-rate" id="funnel-reminders-rate">0.0% of failures</div></div>
+          <div class="funnel-step escalated"><div class="funnel-label">Manual escalations</div><div class="funnel-count" id="funnel-escalations">0</div><div class="funnel-rate" id="funnel-escalations-rate">0.0% of failures</div></div>
+          <div class="funnel-step recovered"><div class="funnel-label">Successful recoveries</div><div class="funnel-count" id="funnel-recovered">0</div><div class="funnel-rate" id="funnel-recovered-rate">0.0% of failures</div></div>
+        </div>
+      </section>
+
       <!-- Live Simulation Actions -->
       <div class="sim-banner">
         <div class="sim-info">
+          <div class="badge" style="display: inline-block; background: rgba(56, 189, 248, 0.14); color: var(--accent-blue); border: 1px solid rgba(56, 189, 248, 0.3); margin-bottom: 8px;">Synthetic Demo</div>
           <h3>⚡ Live Demo Simulation Controls</h3>
           <p>
             Trigger test scenarios directly to observe instant diagnosis, policy
             gating, recovery execution, and audit updates.
           </p>
         </div>
+
         <div class="sim-buttons">
+          <button onclick="runBatchDemo()" class="btn-sim">
+            📊 Run 50-Case Batch Demo
+          </button>
           <button onclick="triggerSimulation('bank_failure')" class="btn-sim">
             🏦 1. Bank Glitch (Retry Flow)
           </button>
@@ -650,6 +796,42 @@
           <button class="close-btn" onclick="closeAuditModal()">&times;</button>
         </div>
         <div class="modal-body">
+          <section class="ai-intelligence" aria-labelledby="ai-intelligence-title">
+            <div class="ai-intelligence-header">
+              <div class="ai-intelligence-title" id="ai-intelligence-title">
+                ✨ AI Recovery Intelligence
+              </div>
+              <div class="ai-control-badge">
+                Financial action controlled by deterministic policy
+              </div>
+            </div>
+            <div class="ai-facts">
+              <div class="ai-fact">
+                <span class="ai-fact-label">AI Provider</span>
+                <span class="ai-fact-value" id="ai-provider">—</span>
+              </div>
+              <div class="ai-fact">
+                <span class="ai-fact-label">AI Generated</span>
+                <span class="ai-fact-value" id="ai-generated">—</span>
+              </div>
+              <div class="ai-fact">
+                <span class="ai-fact-label">Policy Decision</span>
+                <span class="ai-fact-value" id="ai-policy-decision">—</span>
+              </div>
+              <div class="ai-fact">
+                <span class="ai-fact-label">Allowed Action</span>
+                <span class="ai-fact-value" id="ai-allowed-action">—</span>
+              </div>
+            </div>
+            <div class="ai-copy-block">
+              <div class="ai-copy-label">AI Explanation</div>
+              <div class="ai-copy-text" id="ai-explanation">No explanation stored for this case.</div>
+            </div>
+            <div class="ai-copy-block">
+              <div class="ai-copy-label">Customer Message</div>
+              <div class="ai-copy-text" id="ai-customer-message">No customer message stored for this case.</div>
+            </div>
+          </section>
           <div class="timeline" id="timeline-container">
             <!-- Timeline items injected here -->
           </div>
@@ -660,6 +842,8 @@
     <div id="toast"></div>
 
     <script>
+      let recoveryCasesByPaymentId = {};
+
       // Fetch and render dashboard data
       async function loadDashboardData() {
         try {
@@ -680,6 +864,7 @@
               `${m.total_cases} failed payments detected`;
             document.getElementById("count-recovered").innerText =
               `${m.recovered_cases} recovered cases`;
+            renderRecoveryFunnel(m);
           }
 
           // 2. Fetch Cases
@@ -693,8 +878,29 @@
         }
       }
 
+      function renderRecoveryFunnel(metrics) {
+        const failed = Number(metrics.total_cases) || 0;
+        const stages = [
+          ["funnel-failed", "funnel-failed-rate", failed],
+          ["funnel-retries", "funnel-retries-rate", Number(metrics.retry_actions) || 0],
+          ["funnel-reminders", "funnel-reminders-rate", Number(metrics.reminder_actions) || 0],
+          ["funnel-escalations", "funnel-escalations-rate", Number(metrics.manual_escalations) || 0],
+          ["funnel-recovered", "funnel-recovered-rate", Number(metrics.recovered_cases) || 0],
+        ];
+
+        stages.forEach(([countId, rateId, count], index) => {
+          document.getElementById(countId).innerText = count.toLocaleString("en-IN");
+          document.getElementById(rateId).innerText = index === 0
+            ? (failed ? "100% of detected failures" : "No cases yet")
+            : `${failed ? ((count / failed) * 100).toFixed(1) : "0.0"}% of failures`;
+        });
+      }
+
       function renderCasesTable(cases) {
         const tbody = document.getElementById("cases-tbody");
+        recoveryCasesByPaymentId = Object.fromEntries(
+          (cases || []).map((caseItem) => [caseItem.payment_id, caseItem]),
+        );
         if (!cases || cases.length === 0) {
           tbody.innerHTML = `<tr><td colspan="10" style="text-align: center; color: var(--text-muted); padding: 30px;">No recovery cases recorded yet. Trigger a simulation or open the checkout store!</td></tr>`;
           return;
@@ -703,8 +909,9 @@
         tbody.innerHTML = cases
           .map((c) => {
             let linkHtml = '<span style="color: #64748b;">—</span>';
-            if (c.payment_link_url) {
-              linkHtml = `<a href="${c.payment_link_url}" target="_blank" class="plink-btn">🔗 Open Link</a>`;
+            const paymentLinkUrl = safeExternalUrl(c.payment_link_url);
+            if (paymentLinkUrl) {
+              linkHtml = `<a href="${escapeHtml(paymentLinkUrl)}" target="_blank" rel="noopener noreferrer" class="plink-btn">Open Link</a>`;
             } else if (c.action_taken === "retry_payment") {
               linkHtml = `<span style="font-size: 12px; color: var(--accent-amber);">Bounded Retry #${c.retry_count}</span>`;
             } else if (c.action_taken === "escalate_manual_review") {
@@ -713,34 +920,35 @@
 
             const recAmount =
               c.recovered_amount > 0
-                ? `<span style="color: var(--accent-green); font-weight: 700;">₹${c.recovered_amount}</span>`
+                ? `<span style="color: var(--accent-green); font-weight: 700;">₹${escapeHtml(c.recovered_amount)}</span>`
                 : `<span style="color: #64748b;">₹0.00</span>`;
 
             const aiReasonTooltip = c.ai_explanation
-              ? `title="${c.ai_explanation.replace(/"/g, "&quot;")}"`
+              ? `title="${escapeHtml(c.ai_explanation)}"`
               : "";
+            const auditArgument = escapeHtml(JSON.stringify(String(c.payment_id ?? "")));
 
             return `
                 <tr>
-                    <td><strong>#${c.id}</strong></td>
+                    <td><strong>#${escapeHtml(c.id)}</strong></td>
                     <td>
-                        <span style="font-family: monospace; font-size: 11px;">${c.payment_id}</span>
-                        <div style="font-size: 10px; color: var(--text-muted);">${c.order_id || ""}</div>
+                        <span style="font-family: monospace; font-size: 11px;">${escapeHtml(c.payment_id)}</span>
+                        <div style="font-size: 10px; color: var(--text-muted);">${escapeHtml(c.order_id)}</div>
                     </td>
-                    <td><strong>₹${c.amount}</strong></td>
+                    <td><strong>₹${escapeHtml(c.amount)}</strong></td>
                     <td ${aiReasonTooltip}>
-                        <div style="font-weight: 600;">${formatCategory(c.diagnosis_category)}</div>
-                        <div style="font-size: 11px; color: var(--text-muted);">${c.error_reason || c.payment_method || ""}</div>
+                        <div style="font-weight: 600;">${escapeHtml(formatCategory(c.diagnosis_category))}</div>
+                        <div style="font-size: 11px; color: var(--text-muted);">${escapeHtml(c.error_reason || c.payment_method)}</div>
                     </td>
                     <td>
-                        <span style="font-size: 11px; font-weight: 600; color: var(--accent-blue);">${c.action_taken || "Pending"}</span>
+                        <span style="font-size: 11px; font-weight: 600; color: var(--accent-blue);">${escapeHtml(c.action_taken || "Pending")}</span>
                     </td>
-                    <td>${c.retry_count}/${c.max_retries}</td>
-                    <td><span class="status-badge status-${c.recovery_status}">${c.recovery_status}</span></td>
+                    <td>${escapeHtml(c.retry_count)}/${escapeHtml(c.max_retries)}</td>
+                    <td><span class="status-badge status-${escapeHtml(c.recovery_status)}">${escapeHtml(c.recovery_status)}</span></td>
                     <td>${linkHtml}</td>
                     <td>${recAmount}</td>
                     <td>
-                        <button onclick="viewAuditTrail('${c.payment_id}')" class="btn btn-outline btn-sm">📜 Audit</button>
+                        <button onclick="viewAuditTrail(${auditArgument})" class="btn btn-outline btn-sm">📜 Audit</button>
                     </td>
                 </tr>
             `;
@@ -750,7 +958,53 @@
 
       function formatCategory(cat) {
         if (!cat) return "Unknown";
-        return cat.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
+        return String(cat).replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
+      }
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;");
+      }
+
+      function safeExternalUrl(value) {
+        if (!value) return null;
+        try {
+          const url = new URL(value);
+          return url.protocol === "https:" ? url.href : null;
+        } catch (_) {
+          return null;
+        }
+      }
+
+      function renderAiIntelligence(caseItem, auditTrail) {
+        const aiLog = (auditTrail || []).find(
+          (log) => log.actor === "AI_AGENT" && log.action === "AI_EXPLANATION_GENERATED",
+        );
+        const policyLog = (auditTrail || []).find(
+          (log) => log.actor === "POLICY_GATE" && log.action.startsWith("POLICY_"),
+        );
+        const providerMatch = aiLog?.details?.match(/^\[(NIM|TEMPLATE)\]/i);
+        const provider = providerMatch?.[1]?.toUpperCase() === "NIM"
+          ? "NVIDIA NIM"
+          : "Template Fallback";
+        const policyDecision = policyLog
+          ? policyLog.action.replace(/^POLICY_/, "")
+          : "Not recorded";
+
+        document.getElementById("ai-provider").innerText = provider;
+        document.getElementById("ai-generated").innerText =
+          provider === "NVIDIA NIM" ? "Yes" : "No";
+        document.getElementById("ai-policy-decision").innerText = policyDecision;
+        document.getElementById("ai-allowed-action").innerText =
+          caseItem?.action_taken || "Not recorded";
+        document.getElementById("ai-explanation").innerText =
+          caseItem?.ai_explanation || "No explanation stored for this case.";
+        document.getElementById("ai-customer-message").innerText =
+          caseItem?.customer_message || "No customer message stored for this case.";
       }
 
       // View audit trail for a case
@@ -758,9 +1012,10 @@
         try {
           document.getElementById("modal-payment-id").innerText =
             `Payment ID: ${paymentId}`;
-          const res = await fetch(`/cases/${paymentId}/audit`);
+          const res = await fetch(`/cases/${encodeURIComponent(paymentId)}/audit`);
           if (res.ok) {
             const data = await res.json();
+            renderAiIntelligence(recoveryCasesByPaymentId[paymentId], data.audit_trail);
             const container = document.getElementById("timeline-container");
             if (!data.audit_trail || data.audit_trail.length === 0) {
               container.innerHTML =
@@ -770,10 +1025,10 @@
                 .map(
                   (log) => `
                         <div class="timeline-item">
-                            <div class="timeline-actor">[${log.actor}]</div>
-                            <div class="timeline-action">${log.action}</div>
-                            <div class="timeline-details">${log.details}</div>
-                            <div class="timeline-time">${log.created_at.replace("T", " ").substring(0, 19)} UTC</div>
+                            <div class="timeline-actor">[${escapeHtml(log.actor)}]</div>
+                            <div class="timeline-action">${escapeHtml(log.action)}</div>
+                            <div class="timeline-details">${escapeHtml(log.details)}</div>
+                            <div class="timeline-time">${escapeHtml(String(log.created_at ?? "").replace("T", " ").substring(0, 19))} UTC</div>
                         </div>
                     `,
                 )
@@ -790,19 +1045,50 @@
         document.getElementById("audit-modal").style.display = "none";
       }
 
-      // Trigger simulation from dashboard
+      // Run the deterministic 50-payment batch demo
+      async function runBatchDemo() {
+        showToast("Running 50-case batch demo...");
+
+        try {
+          const res = await fetch("/api/demo/run-batch", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+          });
+
+          const data = await res.json();
+
+          if (!res.ok) {
+            throw new Error(data.message || "Batch demo failed");
+          }
+
+          showToast(
+            `Batch complete: ${data.report.payments_processed} payments processed`,
+          );
+
+          await loadDashboardData();
+        } catch (err) {
+          console.error("Batch demo error:", err);
+          showToast(`Batch demo error: ${err.message}`);
+        }
+      }
+
+      // Trigger an individual simulation from the dashboard controls.
       async function triggerSimulation(scenario) {
         showToast(`Triggering ${scenario.replace("_", " ")} simulation...`);
         try {
           const res = await fetch("/api/simulate", {
             method: "POST",
             headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({scenario: scenario}),
+            body: JSON.stringify({scenario}),
           });
           const data = await res.json();
+          if (!res.ok) {
+            throw new Error(data.message || "Simulation failed");
+          }
           showToast(`Simulation completed: ${data.message || data.status}`);
-          loadDashboardData();
+          await loadDashboardData();
         } catch (err) {
+          console.error("Simulation error:", err);
           showToast(`Simulation error: ${err.message}`);
         }
       }

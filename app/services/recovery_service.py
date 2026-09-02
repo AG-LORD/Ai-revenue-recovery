@@ -210,6 +210,12 @@ def process_recovery_success_event(event_type: str, data: dict) -> tuple[Dict, b
     )
     if not matching_case:
         return None, False
+    if matching_case.get("recovery_status") == "RECOVERED":
+        logger.info(
+            "Recovery success already recorded for case %s; ignoring duplicate event",
+            matching_case["id"],
+        )
+        return matching_case, False
     amount_paise = payment.get("amount") or payment_link.get("amount_paid") or payment_link.get("amount") or 0
     updated_case = database.mark_case_recovered(
         case_id=matching_case["id"],

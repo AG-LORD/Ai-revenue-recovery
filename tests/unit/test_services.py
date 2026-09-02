@@ -60,8 +60,7 @@ def test_cancellation_can_only_create_customer_initiated_link() -> None:
             "is permitted."
         ),
         "customer_message": (
-            "Your order is ready whenever you are: "
-            "https://rzp.io/l/recovery"
+            "Your order is ready whenever you are."
         ),
     }
 
@@ -91,6 +90,34 @@ def test_cancellation_can_only_create_customer_initiated_link() -> None:
     # Safety validation still applies to AI output.
     assert "automatically charging" not in insight["customer_message"].lower()
     assert insight["safety_validated"] is True
+
+
+def test_nim_invented_payment_details_fall_back_to_template() -> None:
+    diagnosis = {"category": "customer_cancelled"}
+    policy = apply_policy(
+        {
+            "diagnosis_category": "customer_cancelled",
+            "is_recoverable": True,
+            "retry_count": 0,
+            "max_retries": 0,
+        }
+    )
+
+    with patch(
+        "app.services.ai_service._generate_with_nim",
+        return_value={
+            "explanation": "Payment details are available.",
+            "customer_message": "Pay Rs. 999 at https://example.invalid/pay.",
+        },
+    ):
+        insight = generate_ai_recovery_insights(
+            {"amount": 500},
+            diagnosis,
+            policy,
+        )
+
+    assert insight["ai_generated"] is False
+    assert insight["provider"] == "template"
 
 def test_gemini_failure_falls_back_to_deterministic_template() -> None:
     diagnosis = {"category": "customer_cancelled"}

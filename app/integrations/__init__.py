@@ -1,1 +1,1 @@
-"""Third-party external SDK integrations (Razorpay, Gemini)."""
+"""Third-party external SDK integrations (Razorpay and NVIDIA NIM)."""

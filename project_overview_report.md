@@ -124,8 +124,8 @@ abstraction; neither depends on FastAPI.
 
 - `AI_ENABLED` is hard-coded to `False` in `app/core/config.py`.
 - `AI_PROVIDER` is `template`.
-- No Gemini client, Gemini API key usage, or Gemini API call remains in the
-  application code.
+- The optional NVIDIA NIM client is used only for communication text when
+  explicitly enabled; no AI provider can authorize financial actions.
 - The AI service returns only explanation and customer-message fields. It does
   not select retry counts, authorize payment, create orders, create payment
   links, or override policy.
@@ -194,7 +194,8 @@ revenue_recovery.db
   `61A7B2F7F81EC1FA3D6A0F1233DC343D2A14DC26EE60956C6C418773FE28D598`.
 - Search confirmed one executable `razorpay.Client(...)` construction, in the
   integration wrapper.
-- `AI_ENABLED=false` and Gemini API calls are zero by implementation.
+- `AI_ENABLED=false` keeps NVIDIA NIM calls disabled by default; when enabled,
+  NIM is limited to explanation and customer-message generation.
 
 `python -m pytest -q` could not be executed because the current virtual
 environment does not contain the `pytest` package. No dependency was installed

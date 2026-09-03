@@ -14,94 +14,58 @@ from typing import Any, Dict
 from app.integrations.razorpay_client import PaymentGateway, PaymentGatewayUnavailable
 from app.repositories import database
 
-
 logger = logging.getLogger(__name__)
 
 
 def execute_recovery_action(case: Dict[str, Any], razorpay_client: PaymentGateway) -> Dict[str, Any]:
-    """Execute the approved recovery action for a case.
-
-    The gateway is injected, keeping the SDK outside business logic.
-    """
+    """Execute the approved recovery action for a case."""
     case_id = case["id"]
     payment_id = case["payment_id"]
-    # Recovery is intentionally unable to derive an action from diagnosis.
-    # ``action_taken`` is written only by the deterministic policy gate.
     action = case.get("action_taken")
     max_retries = case.get("max_retries", 0)
     retry_count = case.get("retry_count", 0)
 
-    # ACTION 1: Controlled Retry (Temporary Issuer Failure)
     if action == "retry_payment":
         if retry_count >= max_retries:
             updated_case = database.update_case_recovery_action(
-                case_id=case_id,
-                payment_id=payment_id,
-                recovery_status="ESCALATED",
+                case_id=case_id, payment_id=payment_id, recovery_status="ESCALATED",
                 action_result=f"RETRY_LIMIT_EXHAUSTED ({retry_count}/{max_retries})",
             )
             database.add_audit_log(
-                payment_id=payment_id,
-                case_id=case_id,
-                actor="RECOVERY_ENGINE",
+                payment_id=payment_id, case_id=case_id, actor="RECOVERY_ENGINE",
                 action="RETRY_BLOCKED_BY_LIMIT",
                 details=f"Cannot retry. Retry limit of {max_retries} reached. Case escalated.",
             )
-            return {
-                "action": "retry_payment",
-                "status": "escalated",
-                "message": "Retry limit reached. Escalated to manual review.",
-                "case": updated_case,
-            }
+            return {"action": "retry_payment", "status": "escalated",
+                    "message": "Retry limit reached. Escalated to manual review.", "case": updated_case}
 
         updated_case = database.increment_retry_count(case_id, payment_id)
         updated_case = database.update_case_recovery_action(
-            case_id=case_id,
-            payment_id=payment_id,
-            recovery_status="PENDING_RETRY",
+            case_id=case_id, payment_id=payment_id, recovery_status="PENDING_RETRY",
             action_result=f"RETRY_ATTEMPT_{updated_case['retry_count']}_INITIATED",
         )
-
         database.add_audit_log(
-            payment_id=payment_id,
-            case_id=case_id,
-            actor="RECOVERY_ENGINE",
+            payment_id=payment_id, case_id=case_id, actor="RECOVERY_ENGINE",
             action="RETRY_INITIATED",
             details=f"Bounded retry #{updated_case['retry_count']} of {max_retries} triggered for Rs. {case['amount']}.",
         )
+        return {"action": "retry_payment", "status": "retry_initiated",
+                "retry_count": updated_case["retry_count"], "max_retries": max_retries, "case": updated_case}
 
-        return {
-            "action": "retry_payment",
-            "status": "retry_initiated",
-            "retry_count": updated_case["retry_count"],
-            "max_retries": max_retries,
-            "case": updated_case,
-        }
-
-    # ACTION 2: Send Payment Reminder / Link (Customer Cancellation)
     elif action == "send_payment_reminder":
         if case.get("payment_link_url"):
-            return {
-                "action": "send_payment_reminder",
-                "status": "link_already_exists",
-                "payment_link_id": case.get("payment_link_id"),
-                "payment_link_url": case.get("payment_link_url"),
-                "case": case,
-            }
+            return {"action": "send_payment_reminder", "status": "link_already_exists",
+                    "payment_link_id": case.get("payment_link_id"),
+                    "payment_link_url": case.get("payment_link_url"), "case": case}
 
-        # recovery_cases.amount is stored in paise. Razorpay Payment Link
-        # amounts are also supplied in the smallest currency unit, so do not
-        # multiply by 100 here.
+        # recovery_cases stores paise internally; database read helpers expose
+        # amount to this service in rupees. Razorpay expects paise here.
         link_payload = {
-            "amount": int(case["amount"]),
+            "amount": int(round(case["amount"] * 100)),
             "currency": case.get("currency", "INR"),
             "accept_partial": False,
             "description": f"Recovery for Order {case.get('order_id', '')}",
-            "customer": {
-                "name": "Test Customer",
-                "email": "customer@example.com",
-                "contact": "+919876543210",
-            },
+            "customer": {"name": "Test Customer", "email": "customer@example.com", "contact": "+919876543210"},
             "notify": {"sms": False, "email": False},
             "reminder_enable": False,
             "notes": {
@@ -122,79 +86,45 @@ def execute_recovery_action(case: Dict[str, Any], razorpay_client: PaymentGatewa
         except Exception as exc:
             logger.exception("Payment-link creation failed for case %s", case_id)
             updated_case = database.update_case_recovery_action(
-                case_id=case_id,
-                payment_id=payment_id,
-                recovery_status="ESCALATED",
+                case_id=case_id, payment_id=payment_id, recovery_status="ESCALATED",
                 action_result=f"PAYMENT_LINK_CREATION_FAILED: {type(exc).__name__}",
             )
             database.add_audit_log(
-                payment_id=payment_id,
-                case_id=case_id,
-                actor="RECOVERY_ENGINE",
+                payment_id=payment_id, case_id=case_id, actor="RECOVERY_ENGINE",
                 action="PAYMENT_LINK_CREATION_FAILED",
                 details="Payment link could not be created; case escalated for manual review.",
             )
-            return {
-                "action": "send_payment_reminder",
-                "status": "escalated",
-                "message": "Payment link creation failed. Escalated to manual review.",
-                "case": updated_case,
-            }
+            return {"action": "send_payment_reminder", "status": "escalated",
+                    "message": "Payment link creation failed. Escalated to manual review.", "case": updated_case}
 
         updated_case = database.update_case_recovery_action(
-            case_id=case_id,
-            payment_id=payment_id,
-            recovery_status="LINK_CREATED",
+            case_id=case_id, payment_id=payment_id, recovery_status="LINK_CREATED",
             action_result=f"PAYMENT_LINK_CREATED: {plink_url}",
-            payment_link_id=plink_id,
-            payment_link_url=plink_url,
+            payment_link_id=plink_id, payment_link_url=plink_url,
         )
-
         database.add_audit_log(
-            payment_id=payment_id,
-            case_id=case_id,
-            actor="RECOVERY_ENGINE",
+            payment_id=payment_id, case_id=case_id, actor="RECOVERY_ENGINE",
             action="PAYMENT_LINK_CREATED",
-            details=f"Generated Razorpay recovery link {plink_id} ({plink_url}) for Rs. {case['amount'] / 100:.2f}. Sent reminder.",
+            details=f"Generated Razorpay recovery link {plink_id} ({plink_url}) for Rs. {case['amount']}. Sent reminder.",
         )
+        return {"action": "send_payment_reminder", "status": "link_created",
+                "payment_link_id": plink_id, "payment_link_url": plink_url, "case": updated_case}
 
-        return {
-            "action": "send_payment_reminder",
-            "status": "link_created",
-            "payment_link_id": plink_id,
-            "payment_link_url": plink_url,
-            "case": updated_case,
-        }
-
-    # ACTION 3: Escalate to Manual Review (Unknown / Non‑recoverable)
     else:
         updated_case = database.update_case_recovery_action(
-            case_id=case_id,
-            payment_id=payment_id,
-            recovery_status="ESCALATED",
+            case_id=case_id, payment_id=payment_id, recovery_status="ESCALATED",
             action_result="FROZEN_FOR_MANUAL_OPERATOR_REVIEW",
         )
         database.add_audit_log(
-            payment_id=payment_id,
-            case_id=case_id,
-            actor="RECOVERY_ENGINE",
+            payment_id=payment_id, case_id=case_id, actor="RECOVERY_ENGINE",
             action="CASE_ESCALATED",
             details="Automated financial recovery halted. Flagged for human support review.",
         )
-        return {
-            "action": "escalate_manual_review",
-            "status": "escalated",
-            "case": updated_case,
-        }
+        return {"action": "escalate_manual_review", "status": "escalated", "case": updated_case}
 
 
 def process_recovery_success_event(event_type: str, data: dict) -> tuple[Dict, bool]:
-    """Process a successful recovery webhook event.
-
-    Match the gateway event to the original case, then record the successful
-    recovery. This is intentionally separate from policy: success events do
-    not authorize a new financial action.
-    """
+    """Process a successful payment_link.paid webhook event."""
     payload = data.get("payload", {})
     payment = payload.get("payment", {}).get("entity", {})
     payment_link = payload.get("payment_link", {}).get("entity", {})
@@ -207,24 +137,19 @@ def process_recovery_success_event(event_type: str, data: dict) -> tuple[Dict, b
     if not matching_case:
         return None, False
     if matching_case.get("recovery_status") == "RECOVERED":
-        logger.info(
-            "Recovery success already recorded for case %s; ignoring duplicate event",
-            matching_case["id"],
-        )
+        logger.info("Recovery success already recorded for case %s; ignoring duplicate event", matching_case["id"])
         return matching_case, False
     amount_paise = payment.get("amount") or payment_link.get("amount_paid") or payment_link.get("amount") or 0
     updated_case = database.mark_case_recovered(
-        case_id=matching_case["id"],
-        payment_id=matching_case["payment_id"],
+        case_id=matching_case["id"], payment_id=matching_case["payment_id"],
         recovered_amount=amount_paise / 100.0,
-        new_payment_id=payment.get("id", "pay_unknown"),
-        event_type=event_type,
+        new_payment_id=payment.get("id", "pay_unknown"), event_type=event_type,
     )
     return updated_case, True
 
 
 def reconcile_successful_payment_event(event_type: str, data: dict) -> tuple[Dict | None, bool]:
-    """Reconcile captured/order-paid lifecycle events with an existing case."""
+    """Reconcile captured/order.paid events, including recovery-link payments."""
     if event_type not in {"payment.captured", "order.paid"}:
         return None, False
 
@@ -234,25 +159,44 @@ def reconcile_successful_payment_event(event_type: str, data: dict) -> tuple[Dic
     payment_id = payment.get("id") or order.get("payment_id")
     order_id = payment.get("order_id") or order.get("id")
 
-    matching_case = database.find_case_for_captured_payment(
-        payment_id=payment_id,
-        order_id=order_id if not payment_id else None,
-    )
+    notes = payment.get("notes") or order.get("notes") or {}
+    original_payment_id = notes.get("original_payment_id")
+
+    # A Payment Link creates a new payment ID. Its explicit original_payment_id
+    # note is the association back to the failed recovery case.
+    matching_case = None
+    if original_payment_id:
+        matching_case = database.find_case_for_recovery_event(
+            order_id=order_id,
+            original_payment_id=original_payment_id,
+        )
+
+    # Preserve the normal strict matching path for ordinary successful payments.
+    if not matching_case:
+        matching_case = database.find_case_for_captured_payment(
+            payment_id=payment_id,
+            order_id=order_id if not payment_id else None,
+        )
+
     if not matching_case:
         return None, False
 
-    amount_paise = (
-        payment.get("amount")
-        or order.get("amount_paid")
-        or order.get("amount")
-        or 0
-    )
+    amount_paise = payment.get("amount") or order.get("amount_paid") or order.get("amount") or 0
+
+    # Never mark a recovery as successful for an unexpected amount.
+    if original_payment_id:
+        expected_amount_paise = int(round(float(matching_case["amount"]) * 100))
+        if int(amount_paise) != expected_amount_paise:
+            logger.warning(
+                "Recovery payment amount mismatch for case %s: expected %s paise, received %s paise",
+                matching_case["id"], expected_amount_paise, amount_paise,
+            )
+            return matching_case, False
+
     successful_payment_id = payment_id or order_id or "payment_unknown"
     updated_case, transitioned = database.mark_case_recovered_paisa(
-        case_id=matching_case["id"],
-        payment_id=matching_case["payment_id"],
-        recovered_amount_paisa=int(amount_paise),
-        new_payment_id=successful_payment_id,
+        case_id=matching_case["id"], payment_id=matching_case["payment_id"],
+        recovered_amount_paisa=int(amount_paise), new_payment_id=successful_payment_id,
         event_type=event_type,
     )
     return updated_case, transitioned

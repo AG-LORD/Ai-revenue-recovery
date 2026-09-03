@@ -93,9 +93,12 @@ def execute_recovery_action(case: Dict[str, Any], razorpay_client: PaymentGatewa
                 "case": case,
             }
 
-        # Generate payment link via the Razorpay client wrapper
+        # Generate payment link via the Razorpay client wrapper.
+        # recovery_cases.amount is stored in rupees in this application, while
+        # Razorpay expects the smallest currency unit (paise) for INR. Keep the
+        # conversion in this boundary only.
         link_payload = {
-            "amount": int(case["amount"] * 100),  # paise
+            "amount": int(case["amount"] * 100),  # rupees -> paise for Razorpay
             "currency": case.get("currency", "INR"),
             "accept_partial": False,
             "description": f"Recovery for Order {case.get('order_id', '')}",

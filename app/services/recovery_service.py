@@ -11,7 +11,6 @@ All database interactions are performed via functions from
 import logging
 from typing import Any, Dict
 
-# Local imports
 from app.integrations.razorpay_client import PaymentGateway, PaymentGatewayUnavailable
 from app.repositories import database
 
@@ -55,10 +54,7 @@ def execute_recovery_action(case: Dict[str, Any], razorpay_client: PaymentGatewa
                 "case": updated_case,
             }
 
-        # Increment retry count
         updated_case = database.increment_retry_count(case_id, payment_id)
-
-        # Record retry execution in DB
         updated_case = database.update_case_recovery_action(
             case_id=case_id,
             payment_id=payment_id,
@@ -93,12 +89,11 @@ def execute_recovery_action(case: Dict[str, Any], razorpay_client: PaymentGatewa
                 "case": case,
             }
 
-        # Generate payment link via the Razorpay client wrapper.
-        # recovery_cases.amount is stored in rupees in this application, while
-        # Razorpay expects the smallest currency unit (paise) for INR. Keep the
-        # conversion in this boundary only.
+        # recovery_cases.amount is stored in paise. Razorpay Payment Link
+        # amounts are also supplied in the smallest currency unit, so do not
+        # multiply by 100 here.
         link_payload = {
-            "amount": int(case["amount"] * 100),  # rupees -> paise for Razorpay
+            "amount": int(case["amount"]),
             "currency": case.get("currency", "INR"),
             "accept_partial": False,
             "description": f"Recovery for Order {case.get('order_id', '')}",
@@ -121,7 +116,6 @@ def execute_recovery_action(case: Dict[str, Any], razorpay_client: PaymentGatewa
             plink_id = plink.get("id")
             plink_url = plink.get("short_url")
         except PaymentGatewayUnavailable:
-            # Simulation remains deterministic and never retries a gateway call.
             logger.warning("Payment gateway unavailable for case %s; using demo link", case_id)
             plink_id = f"plink_simulated_{case_id}"
             plink_url = f"https://rzp.io/i/simulated_{case_id}"
@@ -147,7 +141,6 @@ def execute_recovery_action(case: Dict[str, Any], razorpay_client: PaymentGatewa
                 "case": updated_case,
             }
 
-        # Update DB with link details
         updated_case = database.update_case_recovery_action(
             case_id=case_id,
             payment_id=payment_id,
@@ -162,7 +155,7 @@ def execute_recovery_action(case: Dict[str, Any], razorpay_client: PaymentGatewa
             case_id=case_id,
             actor="RECOVERY_ENGINE",
             action="PAYMENT_LINK_CREATED",
-            details=f"Generated Razorpay recovery link {plink_id} ({plink_url}) for Rs. {case['amount']}. Sent reminder.",
+            details=f"Generated Razorpay recovery link {plink_id} ({plink_url}) for Rs. {case['amount'] / 100:.2f}. Sent reminder.",
         )
 
         return {
@@ -241,8 +234,6 @@ def reconcile_successful_payment_event(event_type: str, data: dict) -> tuple[Dic
     payment_id = payment.get("id") or order.get("payment_id")
     order_id = payment.get("order_id") or order.get("id")
 
-    # A supplied payment ID must match exactly. Only order-only events may use
-    # an order fallback, and only when that order maps to one open case.
     matching_case = database.find_case_for_captured_payment(
         payment_id=payment_id,
         order_id=order_id if not payment_id else None,

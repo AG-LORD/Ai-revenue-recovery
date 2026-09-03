@@ -176,6 +176,15 @@
       .card-escalated::before {
         background: var(--accent-amber);
       }
+      .card-captured::before {
+        background: var(--accent-blue);
+      }
+      .card-still-risk::before {
+        background: var(--accent-rose);
+      }
+      .card-processed::before {
+        background: var(--accent-purple);
+      }
 
       .metric-label {
         font-size: 12px;
@@ -210,7 +219,7 @@
       .journey-title { font-size: 16px; font-weight: 700; }
       .journey-subtitle { color: var(--text-muted); font-size: 12px; margin-top: 4px; }
       .journey-flow { color: var(--accent-blue); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; }
-      .funnel-grid { display: grid; grid-template-columns: repeat(5, minmax(135px, 1fr)); gap: 10px; align-items: stretch; }
+      .funnel-grid { display: grid; grid-template-columns: repeat(7, minmax(120px, 1fr)); gap: 10px; align-items: stretch; }
       .funnel-step { position: relative; background: rgba(15, 23, 42, 0.5); border: 1px solid var(--border-color); border-radius: 9px; padding: 14px; }
       .funnel-step:not(:last-child)::after { content: "→"; position: absolute; right: -16px; top: 50%; transform: translateY(-50%); color: var(--text-muted); font-size: 18px; z-index: 1; }
       .funnel-label { color: var(--text-muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.35px; }
@@ -220,6 +229,22 @@
       .funnel-step.recovered .funnel-count { color: var(--accent-green); }
       .funnel-step.escalated .funnel-count { color: var(--accent-amber); }
       @media (max-width: 900px) { .funnel-grid { grid-template-columns: repeat(2, minmax(135px, 1fr)); } .funnel-step:not(:last-child)::after { display: none; } }
+
+      .judge-narrative { background: linear-gradient(135deg, rgba(37, 99, 235, 0.14), rgba(15, 23, 42, 0.8)); border: 1px solid rgba(96, 165, 250, 0.35); border-radius: 12px; padding: 16px 20px; margin-bottom: 24px; }
+      .narrative-steps { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; color: var(--accent-blue); font-size: 12px; font-weight: 700; letter-spacing: 0.4px; }
+      .narrative-steps span:not(:last-child)::after { content: "→"; margin-left: 8px; color: var(--text-muted); }
+      .batch-result { display: none; background: rgba(74, 222, 128, 0.08); border: 1px solid rgba(74, 222, 128, 0.35); border-radius: 12px; padding: 18px 22px; margin-bottom: 24px; }
+      .batch-result-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+      .batch-result-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+      .batch-result-value { font-size: 18px; font-weight: 700; color: var(--text-primary); }
+      .batch-result-label { color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.45px; }
+      .case-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 22px; }
+      .case-summary-item { background: rgba(15, 23, 42, 0.45); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 12px; }
+      .case-summary-item.emphasis { border-color: rgba(74, 222, 128, 0.45); }
+      .case-summary-label { color: var(--text-muted); display: block; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 4px; }
+      .case-summary-value { color: var(--text-primary); font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+      .policy-emphasis { color: var(--accent-amber); font-weight: 800; }
+      @media (max-width: 620px) { .case-summary { grid-template-columns: 1fr; } }
 
       /* Simulation Controls Banner */
       .sim-banner {
@@ -626,6 +651,16 @@
         </div>
       </header>
 
+      <section class="judge-narrative" aria-label="System narrative">
+        <strong>Revenue recovery in one view:</strong>
+        deterministic policy authorizes bounded action, while AI explains the case and drafts communication.
+        Every outcome is measured from persisted payment and recovery state.
+        <div class="narrative-steps">
+          <span>DETECT</span><span>DIAGNOSE</span><span>POLICY</span>
+          <span>ACT</span><span>RECOVER</span><span>MEASURE</span>
+        </div>
+      </section>
+
       <!-- Top Metrics Cards -->
       <div class="metrics-grid">
         <div class="metric-card card-risk">
@@ -646,6 +681,42 @@
             ₹0.00
           </div>
           <div class="metric-sub" id="count-recovered">0 recovered cases</div>
+        </div>
+
+        <div class="metric-card card-captured">
+          <div class="metric-label">Captured Revenue</div>
+          <div
+            class="metric-value"
+            style="color: var(--accent-blue)"
+            id="val-captured"
+          >
+            ₹0.00
+          </div>
+          <div class="metric-sub">All server-confirmed captures</div>
+        </div>
+
+        <div class="metric-card card-still-risk">
+          <div class="metric-label">Still at Risk</div>
+          <div
+            class="metric-value"
+            style="color: var(--accent-rose)"
+            id="val-still-risk"
+          >
+            ₹0.00
+          </div>
+          <div class="metric-sub">Unrecovered at-risk revenue</div>
+        </div>
+
+        <div class="metric-card card-processed">
+          <div class="metric-label">Cases Processed</div>
+          <div
+            class="metric-value"
+            style="color: var(--accent-purple)"
+            id="val-processed"
+          >
+            0
+          </div>
+          <div class="metric-sub">Payments evaluated by the workflow</div>
         </div>
 
         <div class="metric-card card-rate">
@@ -695,10 +766,12 @@
           <div class="journey-flow">Failure detected → Diagnosis → Policy decision → Recovery action → Revenue recovered</div>
         </div>
         <div class="funnel-grid">
-          <div class="funnel-step"><div class="funnel-label">Failed payments</div><div class="funnel-count" id="funnel-failed">0</div><div class="funnel-rate" id="funnel-failed-rate">No cases yet</div></div>
+          <div class="funnel-step"><div class="funnel-label">Payments processed</div><div class="funnel-count" id="funnel-processed">0</div><div class="funnel-rate" id="funnel-processed-rate">No payments yet</div></div>
+          <div class="funnel-step"><div class="funnel-label">Failures detected</div><div class="funnel-count" id="funnel-failed">0</div><div class="funnel-rate" id="funnel-failed-rate">No cases yet</div></div>
+          <div class="funnel-step"><div class="funnel-label">Cases diagnosed</div><div class="funnel-count" id="funnel-diagnosed">0</div><div class="funnel-rate" id="funnel-diagnosed-rate">0.0% of payments</div></div>
           <div class="funnel-step"><div class="funnel-label">Bounded retries</div><div class="funnel-count" id="funnel-retries">0</div><div class="funnel-rate" id="funnel-retries-rate">0.0% of failures</div></div>
           <div class="funnel-step"><div class="funnel-label">Payment links / reminders</div><div class="funnel-count" id="funnel-reminders">0</div><div class="funnel-rate" id="funnel-reminders-rate">0.0% of failures</div></div>
-          <div class="funnel-step escalated"><div class="funnel-label">Manual escalations</div><div class="funnel-count" id="funnel-escalations">0</div><div class="funnel-rate" id="funnel-escalations-rate">0.0% of failures</div></div>
+          <div class="funnel-step escalated"><div class="funnel-label">Manual reviews</div><div class="funnel-count" id="funnel-escalations">0</div><div class="funnel-rate" id="funnel-escalations-rate">0.0% of failures</div></div>
           <div class="funnel-step recovered"><div class="funnel-label">Successful recoveries</div><div class="funnel-count" id="funnel-recovered">0</div><div class="funnel-rate" id="funnel-recovered-rate">0.0% of failures</div></div>
         </div>
       </section>
@@ -706,8 +779,8 @@
       <!-- Live Simulation Actions -->
       <div class="sim-banner">
         <div class="sim-info">
-          <div class="badge" style="display: inline-block; background: rgba(56, 189, 248, 0.14); color: var(--accent-blue); border: 1px solid rgba(56, 189, 248, 0.3); margin-bottom: 8px;">Synthetic Demo</div>
-          <h3>⚡ Live Demo Simulation Controls</h3>
+          <div class="badge" style="display: inline-block; background: rgba(56, 189, 248, 0.14); color: var(--accent-blue); border: 1px solid rgba(56, 189, 248, 0.3); margin-bottom: 8px;">CONTROLLED FAILURE SIMULATION</div>
+          <h3>⚡ Controlled Recovery Demo</h3>
           <p>
             Trigger test scenarios directly to observe instant diagnosis, policy
             gating, recovery execution, and audit updates.
@@ -722,7 +795,7 @@
             🏦 1. Bank Glitch (Retry Flow)
           </button>
           <button onclick="triggerSimulation('cancellation')" class="btn-sim">
-            🛒 2. Abandoned Checkout (Link Flow)
+            🛒 2. Simulated Failure (Link Flow)
           </button>
           <button onclick="triggerSimulation('link_paid')" class="btn-sim">
             💳 3. Customer Pays Link (Recover ₹500)
@@ -735,6 +808,28 @@
           </button>
         </div>
       </div>
+
+      <section id="batch-result" class="batch-result" aria-live="polite">
+        <div class="batch-result-header">
+          <div>
+            <div class="badge" style="display: inline-block; background: rgba(74, 222, 128, 0.12); color: var(--accent-green); border: 1px solid rgba(74, 222, 128, 0.35);">SYNTHETIC DEMO</div>
+            <h3 style="margin-top: 8px;">50-case experiment complete</h3>
+          </div>
+          <div style="font-size: 12px; color: var(--text-muted);">
+            Recovery mode: <strong id="batch-mode">synthetic_confirmation</strong>
+          </div>
+        </div>
+        <div class="batch-result-grid">
+          <div><div class="batch-result-label">Seed</div><div class="batch-result-value" id="batch-seed">—</div></div>
+          <div><div class="batch-result-label">Payments</div><div class="batch-result-value" id="batch-payments">—</div></div>
+          <div><div class="batch-result-label">At risk</div><div class="batch-result-value" id="batch-risk">—</div></div>
+          <div><div class="batch-result-label">Recovered</div><div class="batch-result-value" id="batch-recovered">—</div></div>
+          <div><div class="batch-result-label">Still at risk</div><div class="batch-result-value" id="batch-still-risk">—</div></div>
+          <div><div class="batch-result-label">Recovery rate</div><div class="batch-result-value" id="batch-rate">—</div></div>
+          <div><div class="batch-result-label">Successful recoveries</div><div class="batch-result-value" id="batch-successes">—</div></div>
+          <div><div class="batch-result-label">Policy violations</div><div class="batch-result-value" id="batch-violations">—</div></div>
+        </div>
+      </section>
 
       <!-- Recovery Cases Table -->
       <div class="table-card">
@@ -796,14 +891,27 @@
           <button class="close-btn" onclick="closeAuditModal()">&times;</button>
         </div>
         <div class="modal-body">
+          <div class="case-summary" id="case-summary">
+            <div class="case-summary-item"><span class="case-summary-label">Payment status</span><span class="case-summary-value" id="case-payment-status">—</span></div>
+            <div class="case-summary-item"><span class="case-summary-label">Amount at risk</span><span class="case-summary-value" id="case-amount-risk">—</span></div>
+            <div class="case-summary-item"><span class="case-summary-label">Diagnosis</span><span class="case-summary-value" id="case-diagnosis">—</span></div>
+            <div class="case-summary-item"><span class="case-summary-label">Why diagnosed</span><span class="case-summary-value" id="case-diagnosis-reason">—</span></div>
+            <div class="case-summary-item emphasis"><span class="case-summary-label">Policy authorized action</span><span class="case-summary-value policy-emphasis" id="case-policy-action">—</span></div>
+            <div class="case-summary-item"><span class="case-summary-label">Action actually executed</span><span class="case-summary-value" id="case-executed-action">—</span></div>
+            <div class="case-summary-item"><span class="case-summary-label">Recovery status</span><span class="case-summary-value" id="case-recovery-status">—</span></div>
+            <div class="case-summary-item emphasis"><span class="case-summary-label">Amount recovered</span><span class="case-summary-value" id="case-recovered-amount">—</span></div>
+          </div>
           <section class="ai-intelligence" aria-labelledby="ai-intelligence-title">
             <div class="ai-intelligence-header">
               <div class="ai-intelligence-title" id="ai-intelligence-title">
                 ✨ AI Recovery Intelligence
               </div>
               <div class="ai-control-badge">
-                Financial action controlled by deterministic policy
+                AI: communication only · Policy: financial authority
               </div>
+            </div>
+            <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">
+              AI explains the case and drafts customer communication. It does not decide, authorize, or execute recovery.
             </div>
             <div class="ai-facts">
               <div class="ai-fact">
@@ -855,6 +963,12 @@
               `₹${m.total_revenue_at_risk.toLocaleString("en-IN")}`;
             document.getElementById("val-recovered").innerText =
               `₹${m.total_revenue_recovered.toLocaleString("en-IN")}`;
+            document.getElementById("val-captured").innerText =
+              `₹${m.total_captured_revenue.toLocaleString("en-IN")}`;
+            document.getElementById("val-still-risk").innerText =
+              `₹${m.revenue_still_at_risk.toLocaleString("en-IN")}`;
+            document.getElementById("val-processed").innerText =
+              Number(m.total_cases || 0).toLocaleString("en-IN");
             document.getElementById("val-rate").innerText =
               `${m.recovery_rate_percentage}%`;
             document.getElementById("val-pending").innerText = m.pending_cases;
@@ -872,16 +986,23 @@
           if (casesRes.ok) {
             const data = await casesRes.json();
             renderCasesTable(data.cases);
+          } else {
+            renderCasesTableError("Recovery cases are temporarily unavailable.");
           }
         } catch (err) {
           console.error("Dashboard refresh error:", err);
+          document.getElementById("cases-tbody").innerHTML =
+            `<tr><td colspan="10" style="text-align: center; color: var(--accent-amber); padding: 30px;">Dashboard API unavailable. Check that the backend is running.</td></tr>`;
         }
       }
 
       function renderRecoveryFunnel(metrics) {
+        const processed = Number(metrics.total_cases) || 0;
         const failed = Number(metrics.total_cases) || 0;
         const stages = [
+          ["funnel-processed", "funnel-processed-rate", processed],
           ["funnel-failed", "funnel-failed-rate", failed],
+          ["funnel-diagnosed", "funnel-diagnosed-rate", failed],
           ["funnel-retries", "funnel-retries-rate", Number(metrics.retry_actions) || 0],
           ["funnel-reminders", "funnel-reminders-rate", Number(metrics.reminder_actions) || 0],
           ["funnel-escalations", "funnel-escalations-rate", Number(metrics.manual_escalations) || 0],
@@ -891,9 +1012,14 @@
         stages.forEach(([countId, rateId, count], index) => {
           document.getElementById(countId).innerText = count.toLocaleString("en-IN");
           document.getElementById(rateId).innerText = index === 0
-            ? (failed ? "100% of detected failures" : "No cases yet")
+            ? (processed ? "100% in experiment" : "No payments yet")
             : `${failed ? ((count / failed) * 100).toFixed(1) : "0.0"}% of failures`;
         });
+      }
+
+      function renderCasesTableError(message) {
+        document.getElementById("cases-tbody").innerHTML =
+          `<tr><td colspan="10" style="text-align: center; color: var(--accent-amber); padding: 30px;">${escapeHtml(message)}</td></tr>`;
       }
 
       function renderCasesTable(cases) {
@@ -944,7 +1070,7 @@
                         <span style="font-size: 11px; font-weight: 600; color: var(--accent-blue);">${escapeHtml(c.action_taken || "Pending")}</span>
                     </td>
                     <td>${escapeHtml(c.retry_count)}/${escapeHtml(c.max_retries)}</td>
-                    <td><span class="status-badge status-${escapeHtml(c.recovery_status)}">${escapeHtml(c.recovery_status)}</span></td>
+                    <td><span class="status-badge status-${escapeHtml(c.recovery_status)}">${escapeHtml(formatRecoveryStatus(c.recovery_status))}</span></td>
                     <td>${linkHtml}</td>
                     <td>${recAmount}</td>
                     <td>
@@ -959,6 +1085,18 @@
       function formatCategory(cat) {
         if (!cat) return "Unknown";
         return String(cat).replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
+      }
+
+      function formatRecoveryStatus(status) {
+        const labels = {
+          DETECTED: "AT RISK",
+          PENDING_RETRY: "RECOVERING",
+          PENDING_REMINDER: "RECOVERING",
+          LINK_CREATED: "RECOVERING",
+          RECOVERED: "RECOVERED",
+          ESCALATED: "MANUAL REVIEW",
+        };
+        return labels[status] || formatCategory(status);
       }
 
       function escapeHtml(value) {
@@ -1007,6 +1145,38 @@
           caseItem?.customer_message || "No customer message stored for this case.";
       }
 
+      function renderCaseSummary(caseItem, auditTrail) {
+        const policyLog = (auditTrail || []).find(
+          (log) => log.actor === "POLICY_GATE" && log.action.startsWith("POLICY_"),
+        );
+        const policyDecision = policyLog
+          ? policyLog.action.replace(/^POLICY_/, "")
+          : "Not recorded";
+        const status = caseItem?.recovery_status || "AT_RISK";
+        const readableStatus = status === "RECOVERED"
+          ? "RECOVERED"
+          : status === "ESCALATED"
+            ? "MANUAL REVIEW"
+            : status === "DETECTED"
+              ? "AT RISK"
+              : "RECOVERING";
+        document.getElementById("case-payment-status").innerText =
+          caseItem?.recovery_status === "RECOVERED" ? "Captured / confirmed" : "Failed / at risk";
+        document.getElementById("case-amount-risk").innerText =
+          `₹${Number(caseItem?.amount || 0).toLocaleString("en-IN", {minimumFractionDigits: 2})}`;
+        document.getElementById("case-diagnosis").innerText =
+          formatCategory(caseItem?.diagnosis_category);
+        document.getElementById("case-diagnosis-reason").innerText =
+          caseItem?.diagnosis_text || caseItem?.error_description || "No diagnosis explanation stored.";
+        document.getElementById("case-policy-action").innerText =
+          `${policyDecision} · ${formatCategory(caseItem?.action_taken || "Not recorded")}`;
+        document.getElementById("case-executed-action").innerText =
+          caseItem?.action_result || "No execution recorded.";
+        document.getElementById("case-recovery-status").innerText = readableStatus;
+        document.getElementById("case-recovered-amount").innerText =
+          `₹${Number(caseItem?.recovered_amount || 0).toLocaleString("en-IN", {minimumFractionDigits: 2})}`;
+      }
+
       // View audit trail for a case
       async function viewAuditTrail(paymentId) {
         try {
@@ -1015,24 +1185,43 @@
           const res = await fetch(`/cases/${encodeURIComponent(paymentId)}/audit`);
           if (res.ok) {
             const data = await res.json();
+            renderCaseSummary(recoveryCasesByPaymentId[paymentId], data.audit_trail);
             renderAiIntelligence(recoveryCasesByPaymentId[paymentId], data.audit_trail);
             const container = document.getElementById("timeline-container");
             if (!data.audit_trail || data.audit_trail.length === 0) {
               container.innerHTML =
                 '<p style="color: var(--text-muted);">No audit events logged.</p>';
             } else {
-              container.innerHTML = data.audit_trail
+              container.innerHTML = [...data.audit_trail]
+                .sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")))
                 .map(
                   (log) => `
                         <div class="timeline-item">
                             <div class="timeline-actor">[${escapeHtml(log.actor)}]</div>
-                            <div class="timeline-action">${escapeHtml(log.action)}</div>
+                            <div class="timeline-action">${escapeHtml(formatAuditAction(log.action))}</div>
                             <div class="timeline-details">${escapeHtml(log.details)}</div>
                             <div class="timeline-time">${escapeHtml(String(log.created_at ?? "").replace("T", " ").substring(0, 19))} UTC</div>
                         </div>
                     `,
                 )
                 .join("");
+            }
+
+            function formatAuditAction(action) {
+              const labels = {
+                PAYMENT_FAILURE_DETECTED: "Failure detected",
+                DIAGNOSIS_PERFORMED: "Diagnosis completed",
+                POLICY_ALLOW_RETRY: "Policy authorized bounded retry",
+                POLICY_ALLOW_REMINDER: "Policy authorized payment reminder",
+                POLICY_ESCALATE_MANUAL_REVIEW: "Policy authorized manual review",
+                POLICY_BLOCKED_BY_GUARDRAIL: "Policy blocked action by guardrail",
+                RETRY_INITIATED: "Bounded retry executed",
+                PAYMENT_LINK_CREATED: "Payment link / reminder executed",
+                CASE_ESCALATED: "Automatic recovery blocked — manual review",
+                REVENUE_RECOVERED: "Payment success — recovery confirmed",
+                AI_EXPLANATION_GENERATED: "AI communication drafted",
+              };
+              return labels[action] || formatCategory(action);
             }
             document.getElementById("audit-modal").style.display = "flex";
           }
@@ -1048,6 +1237,11 @@
       // Run the deterministic 50-payment batch demo
       async function runBatchDemo() {
         showToast("Running 50-case batch demo...");
+        const batchButton = document.querySelector('button[onclick="runBatchDemo()"]');
+        if (batchButton) {
+          batchButton.disabled = true;
+          batchButton.innerText = "⏳ Running 50-Case Demo...";
+        }
 
         try {
           const res = await fetch("/api/demo/run-batch", {
@@ -1064,12 +1258,32 @@
           showToast(
             `Batch complete: ${data.report.payments_processed} payments processed`,
           );
+          renderBatchResult(data.report);
 
           await loadDashboardData();
         } catch (err) {
           console.error("Batch demo error:", err);
           showToast(`Batch demo error: ${err.message}`);
+        } finally {
+          if (batchButton) {
+            batchButton.disabled = false;
+            batchButton.innerText = "📊 Run 50-Case Batch Demo";
+          }
         }
+      }
+
+      function renderBatchResult(report) {
+        const money = (value) => `₹${Number(value || 0).toLocaleString("en-IN", {minimumFractionDigits: 2})}`;
+        document.getElementById("batch-seed").innerText = report.seed ?? "—";
+        document.getElementById("batch-payments").innerText = report.payments_processed ?? "—";
+        document.getElementById("batch-risk").innerText = money(report.revenue_at_risk);
+        document.getElementById("batch-recovered").innerText = money(report.revenue_recovered);
+        document.getElementById("batch-still-risk").innerText = money(report.revenue_still_at_risk);
+        document.getElementById("batch-rate").innerText = `${Number(report.recovery_rate || 0).toFixed(2)}%`;
+        document.getElementById("batch-successes").innerText = report.successful_recoveries ?? "—";
+        document.getElementById("batch-violations").innerText = report.policy_violations ?? "—";
+        document.getElementById("batch-mode").innerText = report.recovery_mode || "synthetic_confirmation";
+        document.getElementById("batch-result").style.display = "block";
       }
 
       // Trigger an individual simulation from the dashboard controls.

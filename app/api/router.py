@@ -12,7 +12,10 @@ import time
 from app.core.config import RAZORPAY_KEY_ID, RAZORPAY_WEBHOOK_SECRET
 
 # Services
-from app.services.recovery_service import process_recovery_success_event
+from app.services.recovery_service import (
+    process_recovery_success_event,
+    reconcile_successful_payment_event,
+)
 from app.services.workflow_service import process_failed_payment
 from scripts import run_batch_demo
 
@@ -25,10 +28,54 @@ from app.repositories.database import (
     get_all_recovery_cases,
     get_audit_trail_for_case,
     get_recovery_metrics,
+    get_case_by_payment_id,
+    get_payment_lifecycle,
+    record_payment_event,
+    retry_failed_payment_event,
+    update_payment_event_status,
 )
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _payment_event_details(data: dict) -> dict:
+    payload = data.get("payload", {})
+    payment = payload.get("payment", {}).get("entity", {})
+    payment_link = payload.get("payment_link", {}).get("entity", {})
+    order = payload.get("order", {}).get("entity", {})
+    return {
+        "payment": payment,
+        "payment_id": payment.get("id") or order.get("payment_id"),
+        "order_id": payment.get("order_id") or order.get("id"),
+        "amount_paise": (
+            payment.get("amount")
+            or payment_link.get("amount_paid")
+            or payment_link.get("amount")
+            or order.get("amount_paid")
+            or order.get("amount")
+        ),
+        "currency": payment.get("currency") or payment_link.get("currency") or order.get("currency"),
+        "payment_status": payment.get("status") or payment_link.get("status") or order.get("status"),
+    }
+
+
+def _record_simulation_payment_event(data: dict) -> None:
+    details = _payment_event_details(data)
+    event_type = data["event"]
+    event_id = data["id"]
+    record_payment_event(
+        event_id=event_id,
+        event_type=event_type,
+        payload_dict=data,
+        source="simulation",
+        payment_id=details["payment_id"],
+        order_id=details["order_id"],
+        amount_paise=details["amount_paise"],
+        currency=details["currency"],
+        payment_status=details["payment_status"],
+    )
+
 
 @router.get("/health")
 async def health():
@@ -63,6 +110,37 @@ async def run_batch_demo_api():
 async def list_api_cases():
     cases = get_all_recovery_cases()
     return {"total_cases": len(cases), "cases": cases}
+
+
+@router.get("/api/cases/{payment_id}")
+async def get_api_case(payment_id: str):
+    """Return non-sensitive authoritative lifecycle and recovery state."""
+    case = get_case_by_payment_id(payment_id)
+    lifecycle = get_payment_lifecycle(payment_id)
+    if not case and not lifecycle["events"]:
+        raise HTTPException(status_code=404, detail="Payment state not found")
+    policy_decisions = {
+        "retry_payment": "ALLOW_RETRY",
+        "send_payment_reminder": "ALLOW_REMINDER",
+        "escalate_manual_review": "ESCALATE_MANUAL_REVIEW",
+    }
+    allowed_action = case.get("action_taken") if case else None
+    return {
+        "payment_id": payment_id,
+        "order_id": case.get("order_id") if case else None,
+        "amount": case.get("amount") if case else lifecycle["amount_paise"] / 100.0,
+        "currency": case.get("currency") if case else lifecycle["currency"],
+        "diagnosis": case.get("diagnosis_text") if case else None,
+        "policy_decision": policy_decisions.get(allowed_action),
+        "allowed_action": allowed_action,
+        "recovery_status": case.get("recovery_status") if case else None,
+        "recovered_amount": case.get("recovered_amount", 0.0) if case else 0.0,
+        "payment_lifecycle_status": lifecycle["status"],
+        "is_successful": lifecycle["is_successful"],
+        "ai_provider": None,
+        "ai_generated": None,
+    }
+
 
 @router.get("/cases")
 async def list_cases():
@@ -211,6 +289,7 @@ async def simulate_scenario(request: Request):
         }
     # Process payload using same workflow as webhook
     event_type = payload["event"]
+    _record_simulation_payment_event(payload)
     if event_type == "payment.failed":
         pay_ent = payload["payload"]["payment"]["entity"]
         razorpay_client = request.app.state.razorpay_client
@@ -237,33 +316,61 @@ async def razorpay_webhook(request: Request):
     data = await request.json()
     event = data.get("event")
     event_id = data.get("id")
+    supported_events = {
+        "payment.failed",
+        "payment.authorized",
+        "payment.captured",
+        "order.paid",
+        "payment_link.paid",
+    }
+    if event not in supported_events:
+        return {"status": "error", "message": "Unhandled event type"}
+
+    details = _payment_event_details(data)
+    payment = details["payment"]
+    payment_id = details["payment_id"]
+    if not event_id:
+        event_id = f"event_{event}_{payment_id or details['order_id']}"
+    if not record_webhook_event(event_id=event_id, event_type=event, payload_dict=data, status="PROCESSING"):
+        add_audit_log(
+            payment_id=payment_id,
+            actor="SYSTEM",
+            action="DUPLICATE_WEBHOOK_IGNORED",
+            details=f"Received duplicate webhook event '{event_id}'. Skipped processing.",
+        )
+        return {"status": "ignored", "message": "Duplicate event already processed", "event_id": event_id}
+    payment_event_recorded = record_payment_event(
+        event_id=event_id,
+        event_type=event,
+        payload_dict=data,
+        source="razorpay_webhook",
+        payment_id=details["payment_id"],
+        order_id=details["order_id"],
+        amount_paise=details["amount_paise"],
+        currency=details["currency"],
+        payment_status=details["payment_status"],
+        processing_status="PROCESSING",
+    )
+    if not payment_event_recorded and not retry_failed_payment_event(event_id):
+        update_webhook_event_status(event_id, "PROCESSED")
+        return {"status": "ignored", "message": "Duplicate payment event already stored", "event_id": event_id}
+
     if event == "payment.failed":
-        payment = data["payload"]["payment"]["entity"]
-        payment_id = payment.get("id")
-        if not event_id:
-            event_id = f"event_{event}_{payment_id}"
-        if not record_webhook_event(event_id=event_id, event_type=event, payload_dict=data, status="PROCESSING"):
-            add_audit_log(
-                payment_id=payment_id,
-                actor="SYSTEM",
-                action="DUPLICATE_WEBHOOK_IGNORED",
-                details=f"Received duplicate webhook event '{event_id}'. Skipped processing.",
-            )
-            return {"status": "ignored", "message": "Duplicate event already processed", "event_id": event_id}
         try:
             outcome = process_failed_payment(payment, razorpay_client)
         except Exception:
             release_processing_webhook_event(event_id)
+            update_payment_event_status(event_id, "FAILED")
             logger.exception("Failed to process payment.failed webhook event %s", event_id)
             return JSONResponse(
                 status_code=500,
                 content={"status": "error", "message": "Webhook processing failed; retry accepted", "event_id": event_id},
             )
         update_webhook_event_status(event_id, "PROCESSED")
+        update_payment_event_status(event_id, "PROCESSED")
         case = outcome["case"]
         pol = outcome["policy"]
         rec = outcome["recovery"]
-        # Build response including policy and recovery info
         response = {
             "status": "ok",
             "case": case,
@@ -271,34 +378,37 @@ async def razorpay_webhook(request: Request):
             "action_allowed": pol.get("action_allowed"),
             "recovery_status": case.get("recovery_status"),
         }
-        # Include recovery result if available (e.g., retry_initiated, link_created, escalated)
         if rec.get("status"):
             response["recovery_result"] = rec["status"]
         return response
+    elif event in {"payment.authorized", "payment.captured", "order.paid"}:
+        reconciled_case = None
+        recovered = False
+        if event in {"payment.captured", "order.paid"}:
+            reconciled_case, recovered = reconcile_successful_payment_event(event, data)
+        update_webhook_event_status(event_id, "PROCESSED")
+        update_payment_event_status(event_id, "PROCESSED")
+        return {
+            "status": "ok",
+            "message": f"{event} recorded",
+            "event_id": event_id,
+            "recovered": recovered,
+            "case": reconciled_case,
+        }
     elif event == "payment_link.paid":
-        payment = data.get("payload", {}).get("payment", {}).get("entity", {})
-        payment_link = data.get("payload", {}).get("payment_link", {}).get("entity", {})
-        payment_id = payment.get("id")
-        if not event_id:
-            event_id = f"event_{event}_{payment_id or payment_link.get('id')}"
-        if not record_webhook_event(event_id=event_id, event_type=event, payload_dict=data, status="PROCESSING"):
-            add_audit_log(
-                payment_id=payment_id,
-                actor="SYSTEM",
-                action="DUPLICATE_WEBHOOK_IGNORED",
-                details=f"Received duplicate webhook event '{event_id}'. Skipped processing.",
-            )
-            return {"status": "ignored", "message": "Duplicate event already processed", "event_id": event_id}
         try:
             rec_case, matched = process_recovery_success_event(event, data)
         except Exception:
             release_processing_webhook_event(event_id)
+            update_payment_event_status(event_id, "FAILED")
             logger.exception("Failed to process payment_link.paid webhook event %s", event_id)
             return JSONResponse(
                 status_code=500,
                 content={"status": "error", "message": "Webhook processing failed; retry accepted", "event_id": event_id},
             )
         update_webhook_event_status(event_id, "PROCESSED")
+        update_payment_event_status(event_id, "PROCESSED")
         return {"status": "ok", "recovered": matched, "case": rec_case}
-    else:
-        return {"status": "error", "message": "Unhandled event type"}
+
+    # Kept unreachable by the supported-events guard above.
+    return {"status": "error", "message": "Unhandled event type"}

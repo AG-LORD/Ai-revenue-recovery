@@ -41,7 +41,28 @@ def init_db():
         """,
     )
 
-    # 2. Recovery Cases Table (Core Financial & Recovery State)
+    # 2. Payment Events Table (Immutable Razorpay lifecycle history)
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS payment_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT UNIQUE NOT NULL,
+            event_type TEXT NOT NULL,
+            payment_id TEXT,
+            order_id TEXT,
+            amount_paise INTEGER,
+            currency TEXT,
+            payment_status TEXT,
+            source TEXT NOT NULL CHECK (source IN ('razorpay_webhook', 'simulation', 'system')),
+            payload TEXT NOT NULL,
+            received_at TEXT NOT NULL,
+            processed_at TEXT,
+            processing_status TEXT NOT NULL
+        );
+        """,
+    )
+
+    # 3. Recovery Cases Table (Core Financial & Recovery State)
     # Check if the old table exists and has the old schema (REAL columns)
     cursor.execute("PRAGMA table_info(recovery_cases)")
     columns = {col[1]: col[2] for col in cursor.fetchall()}
@@ -283,6 +304,250 @@ def release_processing_webhook_event(event_id: str) -> None:
     )
     conn.commit()
     conn.close()
+
+
+def record_payment_event(
+    event_id: str,
+    event_type: str,
+    payload_dict: dict,
+    source: str,
+    payment_id: str | None = None,
+    order_id: str | None = None,
+    amount_paise: int | None = None,
+    currency: str | None = None,
+    payment_status: str | None = None,
+    processing_status: str = "PROCESSED",
+) -> bool:
+    """Record one immutable payment lifecycle event.
+
+    The unique event ID makes this operation idempotent independently of the
+    webhook reservation table.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    conn = get_connection()
+    try:
+        conn.execute(
+            """
+            INSERT INTO payment_events (
+                event_id, event_type, payment_id, order_id, amount_paise,
+                currency, payment_status, source, payload, received_at,
+                processed_at, processing_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event_id,
+                event_type,
+                payment_id,
+                order_id,
+                amount_paise,
+                currency,
+                payment_status,
+                source,
+                json.dumps(payload_dict),
+                now,
+                now if processing_status == "PROCESSED" else None,
+                processing_status,
+            ),
+        )
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+    finally:
+        conn.close()
+
+
+def update_payment_event_status(event_id: str, processing_status: str) -> None:
+    """Update processing metadata without changing the immutable event data."""
+    processed_at = datetime.now(timezone.utc).isoformat() if processing_status == "PROCESSED" else None
+    conn = get_connection()
+    try:
+        conn.execute(
+            """
+            UPDATE payment_events
+            SET processing_status = ?, processed_at = ?
+            WHERE event_id = ?
+            """,
+            (processing_status, processed_at, event_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def retry_failed_payment_event(event_id: str) -> bool:
+    """Re-claim a lifecycle event after its first processing attempt failed."""
+    conn = get_connection()
+    try:
+        cursor = conn.execute(
+            """
+            UPDATE payment_events
+            SET processing_status = ?, processed_at = NULL
+            WHERE event_id = ? AND processing_status = 'FAILED'
+            """,
+            ("PROCESSING", event_id),
+        )
+        conn.commit()
+        return cursor.rowcount == 1
+    finally:
+        conn.close()
+
+
+def has_payment_event(event_id: str) -> bool:
+    """Return whether a lifecycle event ID is already stored."""
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM payment_events WHERE event_id = ?",
+            (event_id,),
+        ).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
+
+def get_payment_events(
+    payment_id: str | None = None,
+    order_id: str | None = None,
+) -> list[dict]:
+    """Return lifecycle events filtered by payment ID and/or order ID."""
+    clauses = []
+    values: list[str] = []
+    if payment_id is not None:
+        clauses.append("payment_id = ?")
+        values.append(payment_id)
+    if order_id is not None:
+        clauses.append("order_id = ?")
+        values.append(order_id)
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            f"SELECT * FROM payment_events{where} ORDER BY id ASC",
+            values,
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def get_latest_payment_event(payment_id: str) -> dict | None:
+    """Return the most recently received lifecycle event for a payment."""
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            """
+            SELECT * FROM payment_events
+            WHERE payment_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (payment_id,),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def get_payment_lifecycle(payment_id: str) -> dict:
+    """Derive the canonical state of a payment from its persisted events."""
+    events = get_payment_events(payment_id=payment_id)
+    if not events:
+        return {
+            "payment_id": payment_id,
+            "status": None,
+            "is_successful": False,
+            "amount_paise": 0,
+            "currency": None,
+            "events": [],
+        }
+
+    successful = [event for event in events if event["event_type"] in {"payment.captured", "order.paid"}]
+    captured = next((event for event in successful if event["event_type"] == "payment.captured"), None)
+    latest = events[-1]
+    canonical = captured or (successful[-1] if successful else None)
+    status = "captured" if canonical else latest["payment_status"] or latest["event_type"].split(".")[-1]
+    return {
+        "payment_id": payment_id,
+        "status": status,
+        "is_successful": canonical is not None,
+        "amount_paise": int((canonical or latest).get("amount_paise") or 0),
+        "currency": (canonical or latest).get("currency"),
+        "events": events,
+    }
+
+
+def get_successful_payments() -> list[dict]:
+    """Return one canonical record per successful payment or paid order.
+
+    Payment and order identifiers are connected so payment.captured followed
+    by order.paid is represented by one successful payment.
+    """
+    events = get_payment_events()
+    successful = [
+        event for event in events
+        if event["processing_status"] == "PROCESSED"
+        and event["event_type"] in {"payment.captured", "order.paid"}
+    ]
+    groups: list[dict] = []
+    payment_groups: dict[str, dict] = {}
+    for event in successful:
+        payment_id = event["payment_id"]
+        order_id = event["order_id"]
+        if payment_id:
+            matching = payment_groups.get(payment_id)
+            if matching is None and order_id:
+                order_groups = [
+                    group for group in groups
+                    if order_id in group["order_ids"]
+                    and not group["payment_ids"]
+                ]
+                matching = order_groups[0] if len(order_groups) == 1 else None
+        else:
+            order_groups = [
+                group for group in groups
+                if order_id and order_id in group["order_ids"]
+            ]
+            matching = order_groups[0] if len(order_groups) == 1 else None
+        if matching is None:
+            matching = {"events": [], "payment_ids": set(), "order_ids": set()}
+            groups.append(matching)
+        matching["events"].append(event)
+        if payment_id:
+            matching["payment_ids"].add(payment_id)
+            payment_groups[payment_id] = matching
+        if order_id:
+            matching["order_ids"].add(order_id)
+
+    canonical_payments = []
+    for group in groups:
+        captured = next(
+            (event for event in group["events"] if event["event_type"] == "payment.captured"),
+            None,
+        )
+        canonical = captured or group["events"][-1]
+        canonical_payments.append(
+            {
+                "payment_id": next(iter(group["payment_ids"]), None),
+                "order_id": next(iter(group["order_ids"]), None),
+                "amount_paise": int(canonical.get("amount_paise") or 0),
+                "currency": canonical.get("currency"),
+                "status": "captured",
+                "event_id": canonical["event_id"],
+                "event_type": canonical["event_type"],
+            }
+        )
+    return canonical_payments
+
+
+def get_captured_revenue() -> int:
+    """Return captured revenue in integer paise, counted once per payment/order."""
+    return sum(payment["amount_paise"] for payment in get_successful_payments())
+
+
+def get_payment_status(payment_id: str) -> str | None:
+    """Return the derived canonical status for a payment."""
+    return get_payment_lifecycle(payment_id)["status"]
 
 
 def add_audit_log(payment_id: str, actor: str, action: str, details: str, case_id: int = None):
@@ -567,38 +832,92 @@ def find_case_for_recovery_event(order_id: str = None, payment_link_id: str = No
         case['amount'] = case['amount'] / 100.0
         case['recovered_amount'] = case['recovered_amount'] / 100.0
     return case
-def mark_case_recovered(case_id: int, payment_id: str, recovered_amount: float, new_payment_id: str, event_type: str) -> dict:
+
+
+def find_case_for_captured_payment(payment_id: str = None, order_id: str = None):
+    """Match a successful payment to one existing case using strict IDs."""
+    conn = get_connection()
+    try:
+        if payment_id:
+            row = conn.execute(
+                "SELECT * FROM recovery_cases WHERE payment_id = ? LIMIT 1",
+                (payment_id,),
+            ).fetchone()
+        elif order_id:
+            rows = conn.execute(
+                "SELECT * FROM recovery_cases WHERE order_id = ? AND recovery_status != 'RECOVERED'",
+                (order_id,),
+            ).fetchall()
+            row = rows[0] if len(rows) == 1 else None
+        else:
+            row = None
+        if not row:
+            return None
+        case = dict(row)
+        case["amount"] = case["amount"] / 100.0
+        case["recovered_amount"] = case["recovered_amount"] / 100.0
+        return case
+    finally:
+        conn.close()
+
+
+def mark_case_recovered_paisa(
+    case_id: int,
+    payment_id: str,
+    recovered_amount_paisa: int,
+    new_payment_id: str,
+    event_type: str,
+) -> tuple[dict, bool]:
+    """Atomically mark a case recovered and audit only the first transition."""
     now = datetime.now(timezone.utc).isoformat()
     conn = get_connection()
-    cursor = conn.cursor()
-    # Convert recovered_amount from rupees to paisa for storage
-    recovered_amount_paisa = int(round(recovered_amount * 100))
-    cursor.execute("""
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
         UPDATE recovery_cases
         SET recovery_status = 'RECOVERED',
             recovered_amount = ?,
             action_result = ?,
             updated_at = ?
         WHERE id = ?
+          AND recovery_status != 'RECOVERED'
     """, (
         recovered_amount_paisa,
         f"RECOVERED via {event_type} ({new_payment_id})",
         now,
         case_id,
     ))
-    conn.commit()
-    cursor.execute("SELECT * FROM recovery_cases WHERE id = ?", (case_id,))
-    updated_case = dict(cursor.fetchone())
-    # Convert from paisa to rupees for the rest of the app
-    updated_case['amount'] = updated_case['amount'] / 100.0
-    updated_case['recovered_amount'] = updated_case['recovered_amount'] / 100.0
-    conn.close()
-    add_audit_log(
-        payment_id=payment_id,
+        changed = cursor.rowcount == 1
+        conn.commit()
+        cursor.execute("SELECT * FROM recovery_cases WHERE id = ?", (case_id,))
+        updated_case = dict(cursor.fetchone())
+    finally:
+        conn.close()
+
+    updated_case["amount"] = updated_case["amount"] / 100.0
+    updated_case["recovered_amount"] = updated_case["recovered_amount"] / 100.0
+    if changed:
+        add_audit_log(
+            payment_id=payment_id,
+            case_id=case_id,
+            actor="RECOVERY_ENGINE",
+            action="REVENUE_RECOVERED",
+            details=(
+                f"RECOVERY_CONFIRMED: recovered Rs. {updated_case['recovered_amount']} "
+                f"from successful {event_type} event ({new_payment_id})."
+            ),
+        )
+    return updated_case, changed
+
+
+def mark_case_recovered(case_id: int, payment_id: str, recovered_amount: float, new_payment_id: str, event_type: str) -> dict:
+    """Compatibility wrapper accepting rupees at the existing call boundary."""
+    updated_case, _ = mark_case_recovered_paisa(
         case_id=case_id,
-        actor="RECOVERY_ENGINE",
-        action="REVENUE_RECOVERED",
-        details=f"Successfully recovered Rs. {updated_case['amount']} via {event_type}. New Payment ID: {new_payment_id}",
+        payment_id=payment_id,
+        recovered_amount_paisa=int(round(recovered_amount * 100)),
+        new_payment_id=new_payment_id,
+        event_type=event_type,
     )
     return updated_case
 def update_case_ai_insights(case_id: int, payment_id: str, ai_explanation: str, customer_message: str, provider: str = "template") -> dict:
@@ -662,6 +981,7 @@ def get_recovery_metrics() -> dict:
     total_at_risk = float(row["total_at_risk"]) / 100.0
     total_recovered = float(row["total_recovered"]) / 100.0
     recovery_rate = (total_recovered / total_at_risk * 100.0) if total_at_risk > 0 else 0.0
+    captured_revenue_paisa = get_captured_revenue()
     return {
         "total_revenue_at_risk": round(total_at_risk, 2),
         "total_revenue_recovered": round(total_recovered, 2),
@@ -673,4 +993,7 @@ def get_recovery_metrics() -> dict:
         "reminder_actions": int(row["reminder_actions"]),
         "manual_escalations": int(row["manual_escalations"]),
         "pending_cases": int(row["pending_cases"]),
+        "total_captured_revenue": round(captured_revenue_paisa / 100.0, 2),
+        "captured_payments": len(get_successful_payments()),
+        "revenue_still_at_risk": round(max(total_at_risk - total_recovered, 0.0), 2),
     }

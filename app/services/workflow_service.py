@@ -104,7 +104,7 @@ def process_failed_payment(
         message = insights["customer_message"].replace(
             "https://rzp.io/l/recovery",
             recovery["payment_link_url"],
-        )
+        ).replace("{{payment_link}}", recovery["payment_link_url"])
 
         if recovery["payment_link_url"] not in message:
             message = (

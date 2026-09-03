@@ -55,6 +55,16 @@ def test_batch_processes_through_workflow_and_calculates_persisted_metrics(
     assert report["revenue_recovered"] <= report["revenue_at_risk"]
     assert report["recovery_rate"] <= 100.0
     assert report["audit_events"] > 0
+    assert report["mode"] == "synthetic_demo"
+    assert report["recovery_mode"] == "synthetic_confirmation"
+    assert report["seed"] == run_batch_demo.DEFAULT_SEED
+    assert report["revenue_at_risk"] == (
+        report["revenue_recovered"] + report["revenue_still_at_risk"]
+    )
+    expected_rate = report["revenue_recovered"] / report["revenue_at_risk"] * 100
+    assert report["recovery_rate"] == expected_rate
+    assert report["policy_violations"] == 0
+    assert report["retry_attempts"] <= report["bounded_retries"] * 1
 
     # Make sure the batch test did not accidentally call real NIM.
     assert mock_nim.call_count == 0
@@ -93,3 +103,14 @@ def test_reset_demo_records_preserves_unrelated_cases(mock_nim) -> None:
 
     # 1 unrelated case + 50 demo cases.
     assert mock_nim.call_count == 1
+
+
+def test_batch_report_is_reproducible_for_same_seed() -> None:
+    events = run_batch_demo.generate_synthetic_failures(seed=12345)
+    first = run_batch_demo.process_batch(events, seed=12345)
+    second = run_batch_demo.process_batch(
+        run_batch_demo.generate_synthetic_failures(seed=12345),
+        seed=12345,
+    )
+
+    assert first == second

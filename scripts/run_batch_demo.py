@@ -1,6 +1,7 @@
 """Run a deterministic, offline batch demo through the recovery workflow."""
 
 import argparse
+import json
 import random
 from collections.abc import Iterable
 from typing import Any
@@ -139,7 +140,9 @@ def _simulate_payment_link_paid(case: dict[str, Any], index: int) -> tuple[dict[
     return process_recovery_success_event("payment_link.paid", payload)
 
 
-def process_batch(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
+def process_batch(
+    events: Iterable[dict[str, Any]], seed: int | None = DEFAULT_SEED
+) -> dict[str, Any]:
     """Process supplied failures through the existing workflow and return stored results."""
     database.reset_batch_demo_cases(BATCH_PAYMENT_PREFIX)
     gateway = UnavailableRazorpayClient()
@@ -149,16 +152,18 @@ def process_batch(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
         case = outcome["case"]
         if outcome["recovery"].get("status") == "link_created" and _should_simulate_recovery(index):
             _simulate_payment_link_paid(case, index)
-    return build_batch_report()
+    return build_batch_report(seed=seed)
 
 
-def build_batch_report() -> dict[str, Any]:
+def build_batch_report(seed: int | None = DEFAULT_SEED) -> dict[str, Any]:
     """Calculate batch results from persisted demo records and audit entries."""
     conn = database.get_connection()
     try:
         cases = conn.execute(
             """
-            SELECT diagnosis_category, action_taken, recovery_status, amount, recovered_amount, payment_link_url
+            SELECT diagnosis_category, action_taken, recovery_status, amount,
+                   recovered_amount, payment_link_url, retry_count,
+                   max_retries, action_result
             FROM recovery_cases WHERE payment_id LIKE ?
             """,
             (f"{BATCH_PAYMENT_PREFIX}%",),
@@ -174,7 +179,7 @@ def build_batch_report() -> dict[str, Any]:
     policy_violations = 0
     total_at_risk_paisa = 0
     total_recovered_paisa = 0
-    retries = links = escalations = recoveries = 0
+    retries = retry_attempts = links = escalations = recoveries = 0
     expected_actions = {
         "temporary_issuer_failure": "retry_payment",
         "customer_cancelled": "send_payment_reminder",
@@ -186,23 +191,58 @@ def build_batch_report() -> dict[str, Any]:
         total_at_risk_paisa += case["amount"]
         total_recovered_paisa += case["recovered_amount"]
         retries += int(case["action_taken"] == "retry_payment")
+        retry_attempts += int(case["retry_count"])
         links += int(bool(case["payment_link_url"]))
         escalations += int(case["recovery_status"] == "ESCALATED")
         recoveries += int(case["recovery_status"] == "RECOVERED")
-        policy_violations += int(case["action_taken"] != expected_actions.get(category))
+        expected_action = expected_actions.get(category)
+        action_matches_policy = case["action_taken"] == expected_action
+        retry_is_bounded = case["retry_count"] <= case["max_retries"]
+        cancellation_is_not_retried = (
+            category != "customer_cancelled" or case["retry_count"] == 0
+        )
+        unknown_is_not_retried = (
+            category != "unknown_failure" or case["retry_count"] == 0
+        )
+        policy_violations += int(
+            not (
+                action_matches_policy
+                and retry_is_bounded
+                and cancellation_is_not_retried
+                and unknown_is_not_retried
+            )
+        )
 
+    total_still_at_risk_paisa = total_at_risk_paisa - total_recovered_paisa
+    assert total_still_at_risk_paisa >= 0, "Recovered revenue cannot exceed revenue at risk"
+    assert total_at_risk_paisa == total_recovered_paisa + total_still_at_risk_paisa
     total_at_risk = total_at_risk_paisa / 100.0
     total_recovered = total_recovered_paisa / 100.0
     return {
+        "mode": "synthetic_demo",
+        "recovery_mode": "synthetic_confirmation",
+        "presentation_currency": "INR",
+        "presentation_unit": "rupees",
+        "seed": seed,
         "payments_processed": len(cases),
+        "revenue_at_risk_paise": total_at_risk_paisa,
         "revenue_at_risk": total_at_risk,
         "diagnosis_counts": diagnosis_counts,
+        "temporary_issuer_failures": diagnosis_counts.get("temporary_issuer_failure", 0),
+        "customer_cancellations": diagnosis_counts.get("customer_cancelled", 0),
+        "unknown_failures": diagnosis_counts.get("unknown_failure", 0),
         "bounded_retries": retries,
+        "retries_authorized": retries,
+        "retry_attempts": retry_attempts,
         "payment_links": links,
+        "reminders_authorized": links,
         "manual_escalations": escalations,
+        "manual_reviews_authorized": escalations,
         "successful_recoveries": recoveries,
+        "revenue_recovered_paise": total_recovered_paisa,
         "revenue_recovered": total_recovered,
-        "revenue_still_at_risk": total_at_risk - total_recovered,
+        "revenue_still_at_risk_paise": total_still_at_risk_paisa,
+        "revenue_still_at_risk": total_still_at_risk_paisa / 100.0,
         "recovery_rate": (total_recovered / total_at_risk * 100.0) if total_at_risk else 0.0,
         "audit_events": int(audit_events),
         "policy_violations": policy_violations,
@@ -215,6 +255,8 @@ def print_report(report: dict[str, Any]) -> None:
     print("\n========================================")
     print("AI REVENUE RECOVERY - BATCH DEMO")
     print("========================================")
+    print("Mode: SYNTHETIC / CONTROLLED DEMO")
+    print(f"Seed: {report['seed']}")
     print(f"Payments processed:       {report['payments_processed']}")
     print(f"Revenue at risk:          Rs. {report['revenue_at_risk']:,.2f}")
     print("\nDiagnosis:")
@@ -223,6 +265,7 @@ def print_report(report: dict[str, Any]) -> None:
     print(f"  Unknown failure:          {diagnosis.get('unknown_failure', 0)}")
     print("\nActions:")
     print(f"  Bounded retries:          {report['bounded_retries']}")
+    print(f"  Retry attempts:           {report['retry_attempts']}")
     print(f"  Payment links:            {report['payment_links']}")
     print(f"  Manual escalations:       {report['manual_escalations']}")
     print("\nRecoveries:")
@@ -232,6 +275,7 @@ def print_report(report: dict[str, Any]) -> None:
     print(f"  Recovery rate:            {report['recovery_rate']:.1f}%")
     print("\nAudit events:              " + str(report["audit_events"]))
     print("Policy violations:         " + str(report["policy_violations"]))
+    print("Recovery confirmations:    SYNTHETIC / CONTROLLED")
     print("\n========================================")
 
 
@@ -242,6 +286,8 @@ def main() -> None:
         action="store_true",
         help="delete only prior demo_batch_v1_ records before processing the demo",
     )
+    parser.add_argument("--json", action="store_true", help="print a machine-readable JSON report")
+    parser.add_argument("--seed", type=int, default=DEFAULT_SEED, help="deterministic scenario seed")
     args = parser.parse_args()
     existing = _demo_record_counts()
     if args.reset_demo:
@@ -249,8 +295,14 @@ def main() -> None:
     elif existing["recovery_cases"] or existing["audit_trail"]:
         raise SystemExit("Existing batch-demo records found. Re-run with --reset-demo to replace only those records.")
 
-    report = process_batch(generate_synthetic_failures())
-    print_report(report)
+    report = process_batch(
+        generate_synthetic_failures(seed=args.seed),
+        seed=args.seed,
+    )
+    if args.json:
+        print(json.dumps(report, sort_keys=True))
+    else:
+        print_report(report)
 
 
 if __name__ == "__main__":

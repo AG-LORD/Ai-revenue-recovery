@@ -225,3 +225,40 @@ def process_recovery_success_event(event_type: str, data: dict) -> tuple[Dict, b
         event_type=event_type,
     )
     return updated_case, True
+
+
+def reconcile_successful_payment_event(event_type: str, data: dict) -> tuple[Dict | None, bool]:
+    """Reconcile captured/order-paid lifecycle events with an existing case."""
+    if event_type not in {"payment.captured", "order.paid"}:
+        return None, False
+
+    payload = data.get("payload", {})
+    payment = payload.get("payment", {}).get("entity", {})
+    order = payload.get("order", {}).get("entity", {})
+    payment_id = payment.get("id") or order.get("payment_id")
+    order_id = payment.get("order_id") or order.get("id")
+
+    # A supplied payment ID must match exactly. Only order-only events may use
+    # an order fallback, and only when that order maps to one open case.
+    matching_case = database.find_case_for_captured_payment(
+        payment_id=payment_id,
+        order_id=order_id if not payment_id else None,
+    )
+    if not matching_case:
+        return None, False
+
+    amount_paise = (
+        payment.get("amount")
+        or order.get("amount_paid")
+        or order.get("amount")
+        or 0
+    )
+    successful_payment_id = payment_id or order_id or "payment_unknown"
+    updated_case, transitioned = database.mark_case_recovered_paisa(
+        case_id=matching_case["id"],
+        payment_id=matching_case["payment_id"],
+        recovered_amount_paisa=int(amount_paise),
+        new_payment_id=successful_payment_id,
+        event_type=event_type,
+    )
+    return updated_case, transitioned

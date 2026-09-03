@@ -59,6 +59,12 @@
         font-size: 13px;
         color: #777;
       }
+
+      .journey-label {
+        margin-top: 8px;
+        font-size: 12px;
+        color: #666;
+      }
     </style>
   </head>
 
@@ -77,10 +83,69 @@
         style="margin-top: 10px; font-size: 13px; color: #555; display: none"
       ></div>
 
-      <div class="test-label">Razorpay Test Mode</div>
+      <div class="test-label">LIVE TEST CHECKOUT · Razorpay Test Mode</div>
+      <div class="journey-label">
+        Server confirmation is required after payment submission.
+        Closing checkout means CHECKOUT_ABANDONED, not payment failure.
+      </div>
     </div>
 
     <script>
+      let statusPollTimer = null;
+      let statusPollAttempts = 0;
+      const maxStatusPollAttempts = 10;
+
+      function stopStatusPolling() {
+        if (statusPollTimer) {
+          clearTimeout(statusPollTimer);
+          statusPollTimer = null;
+        }
+      }
+
+      async function pollPaymentStatus(apiBase, paymentId, btn, statusMsg) {
+        if (statusPollAttempts >= maxStatusPollAttempts) {
+          statusMsg.innerText =
+            "Payment submitted; server confirmation is still pending. Check the dashboard.";
+          btn.disabled = false;
+          btn.innerText = "Pay ₹500";
+          return;
+        }
+
+        statusPollAttempts += 1;
+        try {
+          const response = await fetch(
+            `${apiBase}/api/cases/${encodeURIComponent(paymentId)}`,
+          );
+          if (response.ok) {
+            const state = await response.json();
+            if (state.payment_lifecycle_status === "captured") {
+              statusMsg.innerText = state.recovery_status === "RECOVERED"
+                ? `Payment captured and ₹${state.recovered_amount} recovered.`
+                : "Payment captured and confirmed by the server.";
+              stopStatusPolling();
+              btn.disabled = false;
+              btn.innerText = "Pay ₹500";
+              return;
+            }
+            if (state.payment_lifecycle_status === "failed") {
+              statusMsg.innerText = "Server confirmed that the payment failed.";
+              stopStatusPolling();
+              btn.disabled = false;
+              btn.innerText = "Pay ₹500";
+              return;
+            }
+          }
+        } catch (error) {
+          console.error("Payment status polling error:", error);
+        }
+
+        statusMsg.innerText = "Payment submitted; waiting for server confirmation...";
+        statusPollTimer = setTimeout(
+          () => pollPaymentStatus(apiBase, paymentId, btn, statusMsg),
+          1500,
+        );
+      }
+
       async function openCheckout() {
         const btn = document.getElementById("pay-button");
         const statusMsg = document.getElementById("status-msg");
@@ -118,24 +183,19 @@
             order_id: order.order_id,
             handler: function (response) {
               console.log("Payment successful!", response);
-              alert(
-                "Payment successful!\n\n" +
-                  "Payment ID: " +
-                  response.razorpay_payment_id +
-                  "\n" +
-                  "Order ID: " +
-                  response.razorpay_order_id,
-              );
-              btn.disabled = false;
-              btn.innerText = "Pay ₹500";
-              statusMsg.innerText = "Payment completed!";
+              statusPollAttempts = 0;
+              statusMsg.innerText =
+                "Payment submitted; waiting for server confirmation...";
+              pollPaymentStatus(apiBase, response.razorpay_payment_id, btn, statusMsg);
             },
             modal: {
               ondismiss: function () {
-                console.log("Checkout modal dismissed / cancelled by user");
+                stopStatusPolling();
+                console.log("Checkout modal dismissed: CHECKOUT_ABANDONED");
                 btn.disabled = false;
                 btn.innerText = "Pay ₹500";
-                statusMsg.innerText = "Payment window was closed.";
+                statusMsg.innerText =
+                  "Checkout abandoned: the payment window was closed. No payment failure was recorded.";
               },
             },
             prefill: {

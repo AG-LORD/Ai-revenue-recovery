@@ -1,224 +1,226 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ShopFlow · Secure Checkout</title>
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Inter, Arial, sans-serif; background: #f4f6f8; color: #17202a; }
+    .top { background: #121a24; color: white; height: 64px; display: flex; align-items: center; padding: 0 6%; gap: 28px; }
+    .logo { font-size: 24px; font-weight: 800; letter-spacing: -.7px; }
+    .logo span { color: #4fd1c5; }
+    .secure { margin-left: auto; font-size: 13px; color: #b8c4d2; }
+    .wrap { max-width: 1180px; margin: 34px auto 60px; padding: 0 24px; }
+    .crumb { color: #718096; font-size: 13px; margin-bottom: 12px; }
+    h1 { font-size: 30px; margin: 0 0 8px; }
+    .sub { color: #667085; margin: 0 0 28px; }
+    .grid { display: grid; grid-template-columns: 1.55fr .8fr; gap: 22px; align-items: start; }
+    .card { background: white; border: 1px solid #e5e9ef; border-radius: 16px; box-shadow: 0 5px 20px rgba(15,23,42,.05); }
+    .section { padding: 22px 24px; }
+    .section + .section { border-top: 1px solid #edf0f4; }
+    .title { font-size: 17px; font-weight: 750; margin-bottom: 17px; display: flex; justify-content: space-between; }
+    .address { display: flex; gap: 14px; align-items: flex-start; }
+    .icon { width: 42px; height: 42px; border-radius: 12px; background: #e8f7f5; display: grid; place-items: center; font-size: 20px; }
+    .address strong { display:block; margin-bottom: 5px; }
+    .muted { color: #697586; font-size: 13px; line-height: 1.45; }
+    .change { margin-left: auto; border: 0; background: transparent; color: #087f8c; font-weight: 700; cursor: pointer; }
+    .product { display: flex; gap: 17px; padding: 15px; border: 1px solid #edf0f4; border-radius: 14px; margin-bottom: 11px; }
+    .product:last-child { margin-bottom: 0; }
+    .pic { width: 86px; height: 86px; border-radius: 13px; background: linear-gradient(135deg,#edf4ff,#e7f7f3); display:grid; place-items:center; font-size: 42px; }
+    .pbody { flex: 1; }
+    .tag { display:inline-block; font-size: 11px; font-weight: 800; color: #087f8c; background: #e8f7f5; padding: 4px 7px; border-radius: 6px; margin-bottom: 7px; }
+    .pname { font-weight: 750; font-size: 16px; }
+    .rating { margin-top: 7px; font-size: 12px; color: #c17b00; }
+    .price { font-weight: 800; font-size: 16px; white-space: nowrap; }
+    .qty { color: #697586; font-size: 12px; margin-top: 7px; }
+    .paybox { position: sticky; top: 20px; overflow: hidden; }
+    .summary-head { padding: 22px 22px 16px; font-weight: 800; font-size: 18px; }
+    .summary { padding: 0 22px 18px; }
+    .row { display:flex; justify-content:space-between; margin: 13px 0; color:#596579; font-size:14px; }
+    .row strong { color:#17202a; }
+    .total { border-top:1px dashed #d9dee6; padding-top:17px; margin-top: 16px; font-size: 20px; font-weight: 850; color:#111827; }
+    .free { color:#17804a; font-weight:800; }
+    .pay { width: calc(100% - 44px); margin: 4px 22px 12px; padding: 15px; border: 0; border-radius: 11px; background: #0b8f83; color:white; font-size:16px; font-weight:800; cursor:pointer; box-shadow: 0 6px 15px rgba(11,143,131,.22); }
+    .pay:hover { background:#087a70; }
+    .pay:disabled { opacity:.55; cursor:not-allowed; box-shadow:none; }
+    .secure-note { padding: 0 22px 21px; text-align:center; font-size:11px; color:#7a8696; }
+    .methods { display:flex; gap:9px; flex-wrap:wrap; }
+    .method { border:1px solid #e1e6ed; border-radius:10px; padding:9px 12px; font-size:12px; color:#4d5968; background:#fbfcfd; }
+    .status { margin-top: 13px; padding: 12px 14px; border-radius: 10px; background:#f1f5f9; color:#536174; font-size:13px; display:none; }
+    .demo { background: linear-gradient(135deg,#102331,#183b4b); color:white; border:0; }
+    .demo .title { color:white; }
+    .demo p { color:#bfd0da; font-size:13px; line-height:1.5; margin:0; }
+    .new-order { border:1px solid #3f7180; background:transparent; color:#d7f8f4; border-radius:8px; padding:7px 10px; font-weight:700; cursor:pointer; font-size:12px; }
+    @media(max-width:800px){ .grid{grid-template-columns:1fr;} .paybox{position:static;} .secure{display:none;} }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="logo">Shop<span>Flow</span></div>
+    <div>Store</div><div>Orders</div><div>Help</div>
+    <div class="secure">🔒 Secure checkout · Razorpay Test Mode</div>
+  </header>
 
-    <title>Razorpay Test Checkout</title>
+  <main class="wrap">
+    <div class="crumb">Home / Cart / <strong>Checkout</strong></div>
+    <h1>Complete your order</h1>
+    <p class="sub">Your order is ready. Choose a payment method to continue.</p>
 
-    <!-- Razorpay Checkout SDK -->
-    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+    <div class="grid">
+      <div>
+        <div class="card">
+          <section class="section">
+            <div class="title">Delivery address <button class="change">Change</button></div>
+            <div class="address">
+              <div class="icon">📍</div>
+              <div><strong>Test Customer</strong><div class="muted">Thane, Maharashtra · India<br>Standard delivery · Expected within 1–2 days</div></div>
+            </div>
+          </section>
 
-    <style>
-      body {
-        font-family: Arial, sans-serif;
-        background: #f5f5f5;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        min-height: 100vh;
-        margin: 0;
-      }
+          <section class="section">
+            <div class="title">Your items <button class="new-order" onclick="loadOrder()">↻ New order</button></div>
+            <div id="products"><div class="muted">Preparing your order…</div></div>
+          </section>
 
-      .card {
-        background: white;
-        width: 350px;
-        padding: 30px;
-        border-radius: 12px;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-        text-align: center;
-      }
+          <section class="section">
+            <div class="title">Payment methods</div>
+            <div class="methods">
+              <div class="method">UPI</div><div class="method">Cards</div><div class="method">Netbanking</div><div class="method">Wallets</div>
+            </div>
+          </section>
+        </div>
 
-      h1 {
-        margin-bottom: 10px;
-      }
-
-      .price {
-        font-size: 32px;
-        font-weight: bold;
-        margin: 20px 0;
-      }
-
-      button {
-        width: 100%;
-        padding: 14px;
-        border: none;
-        border-radius: 8px;
-        background: #3399cc;
-        color: white;
-        font-size: 16px;
-        cursor: pointer;
-      }
-
-      button:hover {
-        opacity: 0.9;
-      }
-
-      .test-label {
-        margin-top: 15px;
-        font-size: 13px;
-        color: #777;
-      }
-
-      .journey-label {
-        margin-top: 8px;
-        font-size: 12px;
-        color: #666;
-      }
-    </style>
-  </head>
-
-  <body>
-    <div class="card">
-      <h1>Test Store</h1>
-
-      <p>Premium Shoes</p>
-
-      <div class="price">₹500</div>
-
-      <button id="pay-button" onclick="openCheckout()">Pay ₹500</button>
-
-      <div
-        id="status-msg"
-        style="margin-top: 10px; font-size: 13px; color: #555; display: none"
-      ></div>
-
-      <div class="test-label">LIVE TEST CHECKOUT · Razorpay Test Mode</div>
-      <div class="journey-label">
-        Server confirmation is required after payment submission.
-        Closing checkout means CHECKOUT_ABANDONED, not payment failure.
+        <div class="card demo" style="margin-top:18px;">
+          <section class="section">
+            <div class="title">🛡️ Revenue Recovery protected</div>
+            <p>If a payment fails, the recovery engine diagnoses the failure, applies a bounded policy, and records the outcome. Financial decisions remain deterministic.</p>
+          </section>
+        </div>
       </div>
+
+      <aside class="card paybox">
+        <div class="summary-head">Order summary</div>
+        <div class="summary" id="summary"><div class="muted">Calculating…</div></div>
+        <button id="pay-button" class="pay" disabled onclick="payNow()">Loading order…</button>
+        <div class="secure-note">🔒 Secured by Razorpay · Test Mode<br>No real money is charged</div>
+      </aside>
     </div>
+  </main>
 
-    <script>
-      let statusPollTimer = null;
-      let statusPollAttempts = 0;
-      const maxStatusPollAttempts = 10;
+<script>
+  let currentOrder = null;
+  let pollTimer = null;
+  let pollAttempts = 0;
 
-      function stopStatusPolling() {
-        if (statusPollTimer) {
-          clearTimeout(statusPollTimer);
-          statusPollTimer = null;
+  const money = n => `₹${Number(n).toLocaleString('en-IN')}`;
+
+  async function loadOrder() {
+    const btn = document.getElementById('pay-button');
+    document.getElementById('products').innerHTML = '<div class="muted">Preparing a new order…</div>';
+    document.getElementById('summary').innerHTML = '<div class="muted">Calculating…</div>';
+    btn.disabled = true;
+    btn.innerText = 'Loading order…';
+    try {
+      const response = await fetch('/api/store-order', { method:'POST', headers:{'Content-Type':'application/json'} });
+      if (!response.ok) throw new Error('Could not create demo order');
+      currentOrder = await response.json();
+      renderOrder(currentOrder);
+      btn.disabled = false;
+      btn.innerText = `Pay ${money(currentOrder.total)}`;
+    } catch (e) {
+      document.getElementById('products').innerHTML = '<div class="muted">Unable to prepare the order. Check that the backend is running.</div>';
+      btn.innerText = 'Try again';
+      btn.disabled = false;
+      btn.onclick = loadOrder;
+    }
+  }
+
+  function renderOrder(order) {
+    document.getElementById('products').innerHTML = order.cart.map(item => `
+      <div class="product">
+        <div class="pic">${item.emoji}</div>
+        <div class="pbody">
+          <span class="tag">${item.category}</span>
+          <div class="pname">${item.name}</div>
+          <div class="rating">★★★★★ <span style="color:#7b8794">${item.rating} · ${item.delivery}</span></div>
+          <div class="qty">Quantity: ${item.quantity}</div>
+        </div>
+        <div class="price">${money(item.line_total)}</div>
+      </div>`).join('');
+
+    document.getElementById('summary').innerHTML = `
+      <div class="row"><span>Items</span><strong>${money(order.subtotal)}</strong></div>
+      <div class="row"><span>Delivery</span><strong class="free">${order.delivery === 0 ? 'FREE' : money(order.delivery)}</strong></div>
+      <div class="row total"><span>Order total</span><strong>${money(order.total)}</strong></div>
+    `;
+  }
+
+  function stopPolling(){ if(pollTimer){ clearTimeout(pollTimer); pollTimer=null; } }
+
+  async function pollPaymentStatus(paymentId, statusMsg, btn) {
+    if (pollAttempts >= 10) {
+      statusMsg.innerText = 'Payment submitted; server confirmation is still pending. Check the dashboard.';
+      btn.disabled = false; btn.innerText = `Pay ${money(currentOrder.total)}`; return;
+    }
+    pollAttempts++;
+    try {
+      const r = await fetch(`/api/cases/${encodeURIComponent(paymentId)}`);
+      if (r.ok) {
+        const state = await r.json();
+        if (state.payment_lifecycle_status === 'captured') {
+          statusMsg.innerText = state.recovery_status === 'RECOVERED' ? `Payment captured and ${money(state.recovered_amount)} recovered.` : 'Payment captured and confirmed by the server.';
+          stopPolling(); btn.disabled=false; btn.innerText=`Pay ${money(currentOrder.total)}`; return;
+        }
+        if (state.payment_lifecycle_status === 'failed') {
+          statusMsg.innerText = 'Server confirmed that the payment failed. Recovery workflow can now act.';
+          stopPolling(); btn.disabled=false; btn.innerText=`Pay ${money(currentOrder.total)}`; return;
         }
       }
+    } catch(e) { console.error(e); }
+    statusMsg.innerText = 'Payment submitted; waiting for server confirmation…';
+    pollTimer = setTimeout(() => pollPaymentStatus(paymentId, statusMsg, btn), 1500);
+  }
 
-      async function pollPaymentStatus(apiBase, paymentId, btn, statusMsg) {
-        if (statusPollAttempts >= maxStatusPollAttempts) {
-          statusMsg.innerText =
-            "Payment submitted; server confirmation is still pending. Check the dashboard.";
-          btn.disabled = false;
-          btn.innerText = "Pay ₹500";
-          return;
-        }
-
-        statusPollAttempts += 1;
-        try {
-          const response = await fetch(
-            `${apiBase}/api/cases/${encodeURIComponent(paymentId)}`,
-          );
-          if (response.ok) {
-            const state = await response.json();
-            if (state.payment_lifecycle_status === "captured") {
-              statusMsg.innerText = state.recovery_status === "RECOVERED"
-                ? `Payment captured and ₹${state.recovered_amount} recovered.`
-                : "Payment captured and confirmed by the server.";
-              stopStatusPolling();
-              btn.disabled = false;
-              btn.innerText = "Pay ₹500";
-              return;
-            }
-            if (state.payment_lifecycle_status === "failed") {
-              statusMsg.innerText = "Server confirmed that the payment failed.";
-              stopStatusPolling();
-              btn.disabled = false;
-              btn.innerText = "Pay ₹500";
-              return;
-            }
+  async function payNow() {
+    if (!currentOrder) return;
+    const btn = document.getElementById('pay-button');
+    btn.disabled = true; btn.innerText = 'Opening secure checkout…';
+    const statusMsg = document.getElementById('status-msg');
+    try {
+      const options = {
+        key: currentOrder.key_id,
+        amount: currentOrder.amount,
+        currency: currentOrder.currency,
+        name: 'ShopFlow Demo',
+        description: currentOrder.cart.map(x => x.name).join(', '),
+        order_id: currentOrder.order_id,
+        handler: function(response) {
+          pollAttempts = 0;
+          statusMsg.style.display = 'block';
+          statusMsg.innerText = 'Payment submitted; waiting for server confirmation…';
+          pollPaymentStatus(response.razorpay_payment_id, statusMsg, btn);
+        },
+        modal: {
+          ondismiss: function() {
+            stopPolling(); btn.disabled=false; btn.innerText=`Pay ${money(currentOrder.total)}`;
+            statusMsg.style.display='block';
+            statusMsg.innerText='Checkout abandoned: the payment window was closed. No payment failure was recorded.';
           }
-        } catch (error) {
-          console.error("Payment status polling error:", error);
-        }
+        },
+        prefill: { name:'Test Customer', email:'test@example.com', contact:'9999999999' },
+        theme: { color:'#0b8f83' }
+      };
+      new Razorpay(options).open();
+    } catch(e) {
+      btn.disabled=false; btn.innerText=`Pay ${money(currentOrder.total)}`;
+      statusMsg.style.display='block'; statusMsg.innerText='Could not open secure checkout. Please try again.';
+    }
+  }
 
-        statusMsg.innerText = "Payment submitted; waiting for server confirmation...";
-        statusPollTimer = setTimeout(
-          () => pollPaymentStatus(apiBase, paymentId, btn, statusMsg),
-          1500,
-        );
-      }
-
-      async function openCheckout() {
-        const btn = document.getElementById("pay-button");
-        const statusMsg = document.getElementById("status-msg");
-
-        try {
-          btn.disabled = true;
-          btn.innerText = "Creating Order...";
-          statusMsg.style.display = "block";
-          statusMsg.innerText = "Requesting secure order from backend...";
-
-          // Determine API base URL (handles both localhost:8000 and direct file://)
-          const apiBase = window.location.origin.includes("http")
-            ? window.location.origin
-            : "http://localhost:8000";
-
-          const response = await fetch(`${apiBase}/api/create-order`, {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-          });
-
-          if (!response.ok) {
-            throw new Error("Failed to create order on server");
-          }
-
-          const order = await response.json();
-
-          statusMsg.innerText = `Order created: ${order.order_id}`;
-
-          var options = {
-            key: order.key_id,
-            amount: order.amount,
-            currency: order.currency,
-            name: "AI Revenue Recovery Demo",
-            description: "Test Purchase",
-            order_id: order.order_id,
-            handler: function (response) {
-              console.log("Payment successful!", response);
-              statusPollAttempts = 0;
-              statusMsg.innerText =
-                "Payment submitted; waiting for server confirmation...";
-              pollPaymentStatus(apiBase, response.razorpay_payment_id, btn, statusMsg);
-            },
-            modal: {
-              ondismiss: function () {
-                stopStatusPolling();
-                console.log("Checkout modal dismissed: CHECKOUT_ABANDONED");
-                btn.disabled = false;
-                btn.innerText = "Pay ₹500";
-                statusMsg.innerText =
-                  "Checkout abandoned: the payment window was closed. No payment failure was recorded.";
-              },
-            },
-            prefill: {
-              name: "Test Customer",
-              email: "test@example.com",
-              contact: "9999999999",
-            },
-            theme: {
-              color: "#3399cc",
-            },
-          };
-
-          var rzp = new Razorpay(options);
-          rzp.open();
-        } catch (error) {
-          console.error("Error launching checkout:", error);
-          alert("Error creating order: " + error.message);
-          btn.disabled = false;
-          btn.innerText = "Pay ₹500";
-          statusMsg.innerText =
-            "Error creating order. Make sure backend is running on port 8000.";
-        }
-      }
-    </script>
-  </body>
+  window.addEventListener('DOMContentLoaded', loadOrder);
+</script>
+<div id="status-msg" class="status" style="max-width:1180px;margin:0 auto 30px;"></div>
+</body>
 </html>

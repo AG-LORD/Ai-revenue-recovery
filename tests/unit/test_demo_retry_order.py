@@ -20,11 +20,12 @@ class FakeGateway:
 def test_synthetic_bank_failure_gets_real_checkout_order() -> None:
     gateway = FakeGateway()
     payment = {
-        "id": "pay_bank_test_123",
-        "amount": 25000,
-        "currency": "INR",
-        "order_id": "order_sim_test_123",
-    }
+    "id": "pay_bank_test_123",
+    "amount": 25000,
+    "currency": "INR",
+    "order_id": "order_sim_test_123",
+    "demo_scenario": "bank_failure",
+}
 
     _materialize_demo_order(payment, gateway)
 

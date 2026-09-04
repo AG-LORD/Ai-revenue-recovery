@@ -109,6 +109,39 @@ def find_case_for_captured_payment_scoped(
         conn.close()
 
 
+def find_same_order_recovery_candidates_scoped(
+    merchant_account_id: int,
+    order_id: str,
+    amount_paise: int,
+    currency: str | None,
+) -> list[dict]:
+    """Return every unresolved, exact same-order recovery opportunity.
+
+    Callers must only reconcile when this list contains exactly one case.  This
+    deliberately does not accept customer-only, amount-only, or unscoped order
+    matching.
+    """
+    if not merchant_account_id or not order_id or amount_paise is None or not currency:
+        return []
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT * FROM recovery_cases
+            WHERE merchant_account_id = ?
+              AND order_id = ?
+              AND amount = ?
+              AND currency = ?
+              AND recovery_status != 'RECOVERED'
+            ORDER BY id ASC
+            """,
+            (merchant_account_id, order_id, int(amount_paise), currency),
+        ).fetchall()
+        return [_to_case(row) for row in rows]
+    finally:
+        conn.close()
+
+
 def find_payment_event_merchant(payment_id: str) -> int | None:
     """Resolve event ownership from persisted payment history."""
     if not payment_id:

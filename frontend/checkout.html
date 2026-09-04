@@ -124,7 +124,7 @@
     btn.disabled = true;
     btn.innerText = 'Loading order…';
     try {
-      const response = await fetch('/api/store-order', { method:'POST', headers:{'Content-Type':'application/json'} });
+      const response = await fetch('/api/store-order', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({}) });
       if (!response.ok) throw new Error('Could not create demo order');
       currentOrder = await response.json();
       renderOrder(currentOrder);

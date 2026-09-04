@@ -96,6 +96,10 @@ def init_db():
                 ai_explanation TEXT,
                 customer_message TEXT,
                 recovered_amount INTEGER NOT NULL DEFAULT 0,
+                recovery_source TEXT,
+                recovered_payment_id TEXT,
+                recovered_event_id TEXT,
+                recovery_confirmed_at TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 merchant_account_id INTEGER
@@ -155,6 +159,10 @@ def init_db():
                 ai_explanation TEXT,
                 customer_message TEXT,
                 recovered_amount INTEGER NOT NULL DEFAULT 0,
+                recovery_source TEXT,
+                recovered_payment_id TEXT,
+                recovered_event_id TEXT,
+                recovery_confirmed_at TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 merchant_account_id INTEGER
@@ -230,6 +238,18 @@ def init_db():
         existing = {col[1] for col in cursor.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in existing:
             cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} INTEGER")
+
+    # Recovery outcome is intentionally separate from the policy action.  These
+    # additions are nullable so existing recovery cases retain their history.
+    for column, definition in (
+        ("recovery_source", "TEXT"),
+        ("recovered_payment_id", "TEXT"),
+        ("recovered_event_id", "TEXT"),
+        ("recovery_confirmed_at", "TEXT"),
+    ):
+        existing = {col[1] for col in cursor.execute("PRAGMA table_info(recovery_cases)").fetchall()}
+        if column not in existing:
+            cursor.execute(f"ALTER TABLE recovery_cases ADD COLUMN {column} {definition}")
 
     conn.commit()
     conn.close()
@@ -705,17 +725,36 @@ def find_case_for_captured_payment(payment_id: str = None, order_id: str = None)
     return case
 
 
-def mark_case_recovered_paisa(case_id: int, payment_id: str, recovered_amount_paisa: int, new_payment_id: str, event_type: str) -> tuple[dict, bool]:
+def mark_case_recovered_paisa(
+    case_id: int,
+    payment_id: str,
+    recovered_amount_paisa: int,
+    new_payment_id: str,
+    event_type: str,
+    recovery_source: str | None = None,
+    event_id: str | None = None,
+) -> tuple[dict, bool]:
     now = datetime.now(timezone.utc).isoformat()
     conn = get_connection()
     try:
         cursor = conn.execute(
             """
             UPDATE recovery_cases
-            SET recovery_status = 'RECOVERED', recovered_amount = ?, action_result = ?, updated_at = ?
+            SET recovery_status = 'RECOVERED', recovered_amount = ?, action_result = ?,
+                recovery_source = ?, recovered_payment_id = ?, recovered_event_id = ?,
+                recovery_confirmed_at = ?, updated_at = ?
             WHERE id = ? AND recovery_status != 'RECOVERED'
             """,
-            (recovered_amount_paisa, f"RECOVERED via {event_type} ({new_payment_id})", now, case_id),
+            (
+                recovered_amount_paisa,
+                f"RECOVERED via {event_type} ({new_payment_id})",
+                recovery_source,
+                new_payment_id,
+                event_id,
+                now,
+                now,
+                case_id,
+            ),
         )
         changed = cursor.rowcount == 1
         conn.commit()
@@ -729,7 +768,7 @@ def mark_case_recovered_paisa(case_id: int, payment_id: str, recovered_amount_pa
             payment_id,
             "RECOVERY_ENGINE",
             "REVENUE_RECOVERED",
-            f"RECOVERY_CONFIRMED: recovered Rs. {updated_case['recovered_amount']} from successful {event_type} event ({new_payment_id}).",
+            f"RECOVERY_CONFIRMED: {recovery_source or 'VERIFIED_PAYMENT'} recovered Rs. {updated_case['recovered_amount']} from successful {event_type} event ({new_payment_id}).",
             case_id=case_id,
         )
     return updated_case, changed

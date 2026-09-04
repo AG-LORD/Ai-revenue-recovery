@@ -8,6 +8,7 @@ from app.repositories import database
 from app.repositories.merchant_scope import (
     find_case_for_captured_payment_scoped,
     find_case_for_recovery_event_scoped,
+    find_same_order_recovery_candidates_scoped,
 )
 from app.services.merchant_service import resolve_event_merchant
 
@@ -147,11 +148,40 @@ def process_recovery_success_event(event_type: str, data: dict) -> tuple[Dict | 
     if expected_amount_paise is None or amount_paise != expected_amount_paise:
         logger.warning("Recovery amount mismatch for case %s: expected %s paise, received %s paise", matching_case["id"], expected_amount_paise, amount_paise)
         return matching_case, False
-    updated_case = database.mark_case_recovered(
+    updated_case, transitioned = database.mark_case_recovered_paisa(
         case_id=matching_case["id"], payment_id=matching_case["payment_id"],
-        recovered_amount=amount_paise / 100.0, new_payment_id=payment.get("id", "pay_unknown"), event_type=event_type,
+        recovered_amount_paisa=amount_paise, new_payment_id=payment.get("id", "pay_unknown"),
+        event_type=event_type, recovery_source="PAYMENT_LINK", event_id=data.get("id"),
     )
-    return updated_case, True
+    return updated_case, transitioned
+
+
+def _same_order_candidate_or_audit(
+    merchant: dict,
+    order_id: str | None,
+    amount_paise: int,
+    currency: str | None,
+    payment_id: str | None,
+) -> Dict | None:
+    """Select one exact recovery opportunity or record why none was selected."""
+    candidates = find_same_order_recovery_candidates_scoped(
+        merchant["id"], order_id or "", amount_paise, currency
+    )
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        database.add_audit_log(
+            payment_id=payment_id or order_id or "payment_unknown",
+            merchant_account_id=merchant["id"],
+            actor="RECONCILIATION",
+            action="SAME_ORDER_RECOVERY_AMBIGUOUS",
+            details=(
+                "Successful payment was recorded in the lifecycle ledger, but "
+                f"{len(candidates)} unresolved recovery opportunities share the "
+                "same merchant, order, amount, and currency. No recovery was selected."
+            ),
+        )
+    return None
 
 
 def reconcile_successful_payment_event(event_type: str, data: dict) -> tuple[Dict | None, bool]:
@@ -165,23 +195,28 @@ def reconcile_successful_payment_event(event_type: str, data: dict) -> tuple[Dic
     notes = payment.get("notes") or order.get("notes") or {}
     original_payment_id = notes.get("original_payment_id")
     merchant = resolve_event_merchant(data)
+    amount_paise = int(payment.get("amount") or order.get("amount_paid") or order.get("amount") or 0)
+    currency = payment.get("currency") or order.get("currency")
+    recovery_source = None
     if merchant:
         matching_case = None
-        if original_payment_id:
-            matching_case = find_case_for_recovery_event_scoped(merchant["id"], order_id, None, original_payment_id)
-        if not matching_case:
-            matching_case = find_case_for_captured_payment_scoped(merchant["id"], payment_id, order_id if not payment_id else None)
-        # A retry is the only supported reason to bridge a new payment ID to
-        # an existing order. Ordinary captures with a different payment ID
-        # must never recover a case by order alone.
+        if payment_id:
+            matching_case = find_case_for_captured_payment_scoped(
+                merchant["id"], payment_id, None
+            )
+        if not matching_case and original_payment_id:
+            matching_case = find_case_for_recovery_event_scoped(
+                merchant["id"], order_id, None, original_payment_id
+            )
+        # A new Razorpay payment ID may represent a customer-native retry. It
+        # can bridge to an opportunity only after merchant, order, amount and
+        # currency resolve to exactly one unresolved candidate.
         if not matching_case and payment_id and order_id:
-            candidate = find_case_for_captured_payment_scoped(merchant["id"], None, order_id)
-            if (
-                candidate
-                and candidate.get("action_taken") == "retry_payment"
-                and candidate.get("recovery_status") == "PENDING_RETRY"
-            ):
-                matching_case = candidate
+            matching_case = _same_order_candidate_or_audit(
+                merchant, order_id, amount_paise, currency, payment_id
+            )
+            if matching_case:
+                recovery_source = "CUSTOMER_RETRY"
     else:
         matching_case = _legacy_recovery_case_by_event(event_type, payment_id, order_id, None, original_payment_id)
         if not matching_case and payment_id and order_id:
@@ -195,9 +230,14 @@ def reconcile_successful_payment_event(event_type: str, data: dict) -> tuple[Dic
     if not matching_case:
         logger.warning("Successful event has no safely resolvable case; no financial action taken")
         return None, False
-    amount_paise = int(payment.get("amount") or order.get("amount_paid") or order.get("amount") or 0)
     expected_amount_paise = _get_stored_amount_paise(matching_case["id"], matching_case["payment_id"])
-    if expected_amount_paise is None or amount_paise != expected_amount_paise:
+    expected_currency = matching_case.get("currency")
+    if (
+        expected_amount_paise is None
+        or amount_paise != expected_amount_paise
+        or not currency
+        or currency != expected_currency
+    ):
         logger.warning("Successful payment amount mismatch for case %s: expected %s paise, received %s paise", matching_case["id"], expected_amount_paise, amount_paise)
         return matching_case, False
     if matching_case.get("action_taken") == "retry_payment":
@@ -206,9 +246,16 @@ def reconcile_successful_payment_event(event_type: str, data: dict) -> tuple[Dic
         if matching_case.get("recovery_status") != "PENDING_RETRY" or retry_count < 1 or retry_count > max_retries:
             logger.warning("Successful event rejected for invalid retry state on case %s", matching_case["id"])
             return matching_case, False
+        recovery_source = recovery_source or "BOUNDED_RETRY"
+    elif recovery_source is None:
+        # Exact payment-ID reconciliation confirms a capture, but does not
+        # rewrite the historical policy decision as an authorized retry.
+        recovery_source = "CUSTOMER_RETRY"
     successful_payment_id = payment_id or order_id or "payment_unknown"
     updated_case, transitioned = database.mark_case_recovered_paisa(
         case_id=matching_case["id"], payment_id=matching_case["payment_id"],
-        recovered_amount_paisa=amount_paise, new_payment_id=successful_payment_id, event_type=event_type,
+        recovered_amount_paisa=amount_paise, new_payment_id=successful_payment_id,
+        event_type=event_type, recovery_source=recovery_source,
+        event_id=data.get("id"),
     )
     return updated_case, transitioned

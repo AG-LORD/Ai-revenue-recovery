@@ -139,7 +139,7 @@ def _template_response(
             "Our support team will assist if needed."
         )
         customer_action = "Wait for support assistance."
-        internal_note = "Manual review is required because the payment was not safely classified for automation."
+        internal_note = "escalate_manual_review: manual review is required because the payment was not safely classified for automation."
 
     return {
         "summary": summary,

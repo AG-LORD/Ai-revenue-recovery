@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from app.repositories.database import get_connection
+from app.repositories.merchant_scope import find_payment_event_merchant
 
 
 DEMO_MERCHANTS = (
@@ -141,7 +142,7 @@ def get_merchant_by_order_id(order_id: str) -> dict | None:
 
 
 def get_merchant_by_payment_id(payment_id: str) -> dict | None:
-    """Resolve ownership from a previously registered recovery/payment case."""
+    """Resolve ownership from persisted payment history or recovery case."""
     if not payment_id:
         return None
     init_merchant_registry()
@@ -157,9 +158,13 @@ def get_merchant_by_payment_id(payment_id: str) -> dict | None:
             """,
             (payment_id,),
         ).fetchone()
-        return dict(row) if row else None
+        if row:
+            return dict(row)
     finally:
         conn.close()
+
+    merchant_id = find_payment_event_merchant(payment_id)
+    return get_merchant_by_id(merchant_id) if merchant_id else None
 
 
 def resolve_event_merchant(event: dict) -> dict | None:
@@ -168,11 +173,11 @@ def resolve_event_merchant(event: dict) -> dict | None:
     Resolution order:
     1. A unique Razorpay account mapping.
     2. Our registered order ownership.
-    3. The original failed payment referenced by a recovery Payment Link.
+    3. Persisted payment/recovery ownership via payment ID.
+    4. Original failed payment referenced by a recovery Payment Link.
 
     Shared demo accounts deliberately fall through to order/case ownership.
-    If none of these identifiers resolve, return ``None`` rather than defaulting
-    to a merchant and risking cross-tenant financial processing.
+    If none resolve, return ``None`` and do not perform a financial action.
     """
     account_id = event.get("account_id")
     if account_id:
@@ -200,6 +205,11 @@ def resolve_event_merchant(event: dict) -> dict | None:
 
     order_id = payment.get("order_id") or order.get("id") or payment_link.get("order_id")
     merchant = get_merchant_by_order_id(order_id)
+    if merchant:
+        return merchant
+
+    payment_id = payment.get("id") or order.get("payment_id")
+    merchant = get_merchant_by_payment_id(payment_id)
     if merchant:
         return merchant
 

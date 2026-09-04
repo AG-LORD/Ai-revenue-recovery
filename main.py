@@ -7,7 +7,7 @@ import logging
 import random
 import time
 from fastapi import FastAPI, Request, HTTPException
-from starlette.responses import FileResponse, JSONResponse
+from starlette.responses import FileResponse, JSONResponse, HTMLResponse
 
 from app.core.config import FRONTEND_DIR, RAZORPAY_KEY_ID
 from app.repositories.database import init_db
@@ -103,14 +103,29 @@ async def retry_checkout(payment_id: str):
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+def dashboard_html_response():
+    """Serve the existing dashboard plus the small retry-action enhancement."""
+    dashboard_path = FRONTEND_DIR / "dashboard.html"
+    html = dashboard_path.read_text(encoding="utf-8")
+    script_tag = '<script src="/retry-dashboard.js"></script>'
+    if script_tag not in html:
+        html = html.replace("</body>", f"{script_tag}\n</body>")
+    return HTMLResponse(content=html)
+
+
+@app.get("/retry-dashboard.js")
+async def retry_dashboard_script():
+    return FileResponse(FRONTEND_DIR / "retry-dashboard.js", media_type="application/javascript")
+
+
 @app.get("/")
 async def home():
-    return FileResponse(FRONTEND_DIR / "dashboard.html")
+    return dashboard_html_response()
 
 
 @app.get("/dashboard")
 async def serve_dashboard():
-    return FileResponse(FRONTEND_DIR / "dashboard.html")
+    return dashboard_html_response()
 
 
 @app.get("/checkout")

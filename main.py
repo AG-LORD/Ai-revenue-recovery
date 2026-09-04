@@ -11,6 +11,7 @@ from starlette.responses import FileResponse, JSONResponse
 
 from app.core.config import FRONTEND_DIR, RAZORPAY_KEY_ID
 from app.repositories.database import init_db
+from app.repositories.merchant_migration import init_merchant_data
 from app.integrations.razorpay_client import create_razorpay_client
 from app.api.router import router
 
@@ -18,6 +19,8 @@ logging.basicConfig(level=logging.INFO)
 
 # Initialise the SQLite database (creates tables if missing)
 init_db()
+# Add merchant tenancy without destroying existing single-merchant demo data.
+init_merchant_data()
 
 app = FastAPI(title="AI Revenue Recovery")
 

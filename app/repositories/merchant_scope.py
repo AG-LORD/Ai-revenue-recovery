@@ -47,7 +47,7 @@ def find_case_for_recovery_event_scoped(
                 (merchant_account_id, original_payment_id),
             ).fetchone()
 
-        if not row and order_id:
+        if not row and order_id and original_payment_id is None:
             rows = conn.execute(
                 """
                 SELECT * FROM recovery_cases
@@ -70,7 +70,12 @@ def find_case_for_captured_payment_scoped(
     payment_id: str | None = None,
     order_id: str | None = None,
 ):
-    """Find a successful-payment recovery case only inside one merchant."""
+    """Find a successful-payment recovery case only inside one merchant.
+
+    A supplied payment ID is authoritative. We never fall back to order-only
+    matching when the event already identifies a payment, because multiple
+    payment attempts can exist for the same Razorpay order.
+    """
     if not merchant_account_id:
         return None
 

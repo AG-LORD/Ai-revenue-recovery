@@ -11,6 +11,7 @@ from app.repositories.database import (
 )
 from app.services.ai_service import generate_ai_recovery_insights
 from app.services.diagnosis_service import diagnose_payment_failure
+from app.services.merchant_service import DEFAULT_MERCHANT_KEY, get_merchant_by_key, register_order
 from app.services.policy_service import apply_policy
 from app.services.recovery_service import execute_recovery_action
 
@@ -56,6 +57,46 @@ def _build_batch_insights(policy: dict[str, Any]) -> dict[str, str]:
         ),
         "provider": "template",
     }
+
+
+def _materialize_demo_order(payment: dict[str, Any], gateway: PaymentGateway) -> None:
+    """Replace the synthetic demo order with a real Razorpay Test Mode order.
+
+    The dashboard's Bank Glitch button intentionally starts with a synthetic
+    payment.failed event. Before that event enters the recovery workflow, give
+    it a real Razorpay order so the retry page can safely open Razorpay Checkout.
+    Normal webhook traffic is never rewritten because only the simulation's
+    ``order_sim_*`` identifiers enter this path.
+    """
+    order_id = str(payment.get("order_id") or "")
+    if not order_id.startswith("order_sim_"):
+        return
+
+    amount_paise = int(payment.get("amount") or 0)
+    if amount_paise <= 0:
+        raise ValueError("Demo retry amount must be positive")
+
+    merchant = get_merchant_by_key(DEFAULT_MERCHANT_KEY)
+    if not merchant:
+        raise RuntimeError("Default demo merchant is unavailable")
+
+    order = gateway.create_order(
+        amount=amount_paise,
+        currency=payment.get("currency") or "INR",
+        receipt=f"recovery_demo_{payment.get('id')}",
+        notes={
+            "merchant_key": DEFAULT_MERCHANT_KEY,
+            "merchant_account_id": str(merchant["id"]),
+            "demo_scenario": "bank_failure",
+            "original_payment_id": str(payment.get("id") or ""),
+        },
+    )
+    real_order_id = order.get("id")
+    if not real_order_id:
+        raise RuntimeError("Razorpay did not return a demo order ID")
+
+    register_order(real_order_id, merchant["id"])
+    payment["order_id"] = real_order_id
 
 
 def _handle_failed_retry(payment: dict[str, Any]) -> dict[str, Any] | None:
@@ -104,12 +145,9 @@ def process_failed_payment(
     gateway: PaymentGateway,
     use_ai: bool = True,
 ) -> dict[str, Any]:
-    """Run detect, diagnose, policy, explain, and permitted recovery in order.
+    """Run detect, policy, explanation, and permitted recovery in order."""
+    _materialize_demo_order(payment, gateway)
 
-    AI is enabled for normal/live processing. The deterministic batch demo can
-    set use_ai=False so that 50 synthetic cases can be processed quickly
-    without making external AI calls.
-    """
     retry_failure = _handle_failed_retry(payment)
     if retry_failure:
         return retry_failure
@@ -153,9 +191,7 @@ def process_failed_payment(
         ).replace("{{payment_link}}", recovery["payment_link_url"])
 
         if recovery["payment_link_url"] not in message:
-            message = (
-                f"{message} Link: {recovery['payment_link_url']}"
-            )
+            message = f"{message} Link: {recovery['payment_link_url']}"
 
         case = update_case_ai_insights(
             case["id"],

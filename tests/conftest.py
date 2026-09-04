@@ -38,13 +38,15 @@ def pytest_configure() -> None:
 
 @pytest.fixture(autouse=True)
 def isolated_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Give every test an initialized SQLite database outside the project root."""
+    """Give every test an initialized merchant-aware SQLite database."""
     from app.repositories import database
+    from app.repositories.merchant_migration import init_merchant_data
 
     database_path = tmp_path / "revenue_recovery_test.db"
     assert database_path.resolve() != PRODUCTION_DATABASE_PATH.resolve()
     monkeypatch.setattr(database, "DATABASE_PATH", str(database_path))
     database.init_db()
+    init_merchant_data()
     yield database_path
 
 

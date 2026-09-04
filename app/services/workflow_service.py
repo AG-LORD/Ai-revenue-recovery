@@ -3,6 +3,7 @@
 from typing import Any
 
 from app.integrations.razorpay_client import PaymentGateway
+from app.repositories import database
 from app.repositories.database import (
     create_or_get_recovery_case,
     update_case_ai_insights,
@@ -57,6 +58,47 @@ def _build_batch_insights(policy: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def _handle_failed_retry(payment: dict[str, Any]) -> dict[str, Any] | None:
+    """Consume a failed retry without opening a second recovery case."""
+    order_id = payment.get("order_id")
+    if not order_id:
+        return None
+
+    case = database.find_case_for_captured_payment(payment_id=None, order_id=order_id)
+    if not case:
+        return None
+
+    if case.get("action_taken") != "retry_payment" or case.get("recovery_status") != "PENDING_RETRY":
+        return None
+
+    updated_case = database.update_case_recovery_action(
+        case_id=case["id"],
+        payment_id=case["payment_id"],
+        recovery_status="ESCALATED",
+        action_result="RETRY_FAILED_ESCALATED",
+    )
+    database.add_audit_log(
+        payment_id=case["payment_id"],
+        case_id=case["id"],
+        actor="RECOVERY_ENGINE",
+        action="RETRY_FAILED_ESCALATED",
+        details="The bounded retry failed. No second automated retry was created; case escalated for manual review.",
+    )
+    return {
+        "case": updated_case,
+        "policy": {
+            "decision": "ESCALATE_MANUAL_REVIEW",
+            "action_allowed": "escalate_manual_review",
+            "reason": "Bounded retry failed; stopping rule reached.",
+        },
+        "recovery": {
+            "action": "escalate_manual_review",
+            "status": "escalated",
+            "case": updated_case,
+        },
+    }
+
+
 def process_failed_payment(
     payment: dict[str, Any],
     gateway: PaymentGateway,
@@ -68,6 +110,10 @@ def process_failed_payment(
     set use_ai=False so that 50 synthetic cases can be processed quickly
     without making external AI calls.
     """
+    retry_failure = _handle_failed_retry(payment)
+    if retry_failure:
+        return retry_failure
+
     diagnosis = diagnose_payment_failure(payment)
 
     case, _ = create_or_get_recovery_case(payment, diagnosis)

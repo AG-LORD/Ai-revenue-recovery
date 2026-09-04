@@ -2,6 +2,7 @@ from app.repositories import database
 from app.services.merchant_service import (
     get_merchant_by_key,
     get_merchant_by_order_id,
+    get_merchant_by_payment_id,
     register_order,
     resolve_event_merchant,
 )
@@ -147,3 +148,44 @@ def test_event_resolver_uses_order_ownership_when_demo_accounts_are_shared():
     assert resolved is not None
     assert resolved["id"] == fit["id"]
     assert resolved["id"] != urban["id"]
+
+
+def test_payment_link_event_resolves_merchant_from_original_payment_case():
+    fit = get_merchant_by_key("fit_gear")
+    register_order("order_fit_link", fit["id"])
+
+    payment = _failure_payment("pay_fit_link", "order_fit_link")
+    case, created = database.create_or_get_recovery_case(payment, _diagnosis())
+    assert created is True
+    assert get_merchant_by_payment_id("pay_fit_link")["id"] == fit["id"]
+
+    event = {
+        "event": "payment_link.paid",
+        "payload": {
+            "payment_link": {
+                "entity": {
+                    "id": "plink_fit_link",
+                    "notes": {"original_payment_id": "pay_fit_link"},
+                }
+            }
+        },
+    }
+
+    resolved = resolve_event_merchant(event)
+    assert resolved is not None
+    assert resolved["id"] == fit["id"]
+    assert case["merchant_account_id"] == fit["id"]
+
+
+def test_unregistered_event_does_not_guess_a_merchant():
+    event = {
+        "account_id": "demo_account",
+        "event": "payment.failed",
+        "payload": {
+            "payment": {
+                "entity": _failure_payment("pay_unknown", "order_unknown")
+            }
+        },
+    }
+
+    assert resolve_event_merchant(event) is None

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.core.config import RAZORPAY_KEY_ID
 from app.repositories import database
 
 
@@ -51,6 +52,7 @@ def authorize_retry_checkout(payment_id: str) -> dict[str, Any]:
         "order_id": order_id,
         "amount": amount_paise,
         "currency": currency,
+        "key_id": RAZORPAY_KEY_ID,
         "retry_count": retry_count,
         "max_retries": max_retries,
         "case_id": case["id"],

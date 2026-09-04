@@ -124,6 +124,7 @@ def _simulate_payment_link_paid(case: dict[str, Any], index: int) -> tuple[dict[
                 "entity": {
                     "id": case["payment_link_id"],
                     "amount_paid": amount_paisa,
+                    "currency": stored_case["currency"],
                     "notes": {"original_payment_id": case["payment_id"]},
                 }
             },
@@ -132,6 +133,7 @@ def _simulate_payment_link_paid(case: dict[str, Any], index: int) -> tuple[dict[
                     "id": f"demo_batch_recovered_{index:03d}",
                     "order_id": case["order_id"],
                     "amount": amount_paisa,
+                    "currency": stored_case["currency"],
                     "notes": {"original_payment_id": case["payment_id"]},
                 }
             },

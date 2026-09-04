@@ -283,7 +283,6 @@ async def simulate_scenario(request: Request):
                         "order_id": ord_id,
                         "amount": amount_paise,
                         "currency": currency,
-                        "currency": "INR",
                         "status": "captured",
                         "notes": {"original_payment_id": orig_pay_id},
                     }

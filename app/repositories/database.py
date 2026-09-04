@@ -18,16 +18,10 @@ def get_connection() -> sqlite3.Connection:
 
 
 def init_db():
-    """Initializes database tables if they do not already exist.
-    Tables:
-    1. webhook_events: Stores incoming webhook events to guarantee idempotency.
-    2. recovery_cases: Stores failed payments, diagnoses, policy state, and recovery outcomes.
-    3. audit_trail: Immutable event log recording every detection, diagnosis, and action.
-    """
+    """Initializes database tables if they do not already exist."""
     conn = get_connection()
     cursor = conn.cursor()
 
-    # 1. Webhook Events Table (for Idempotency)
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS webhook_events (
@@ -36,12 +30,12 @@ def init_db():
             event_type TEXT NOT NULL,
             payload TEXT NOT NULL,
             status TEXT NOT NULL,
-            received_at TEXT NOT NULL
+            received_at TEXT NOT NULL,
+            merchant_account_id INTEGER
         );
         """,
     )
 
-    # 2. Payment Events Table (Immutable Razorpay lifecycle history)
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS payment_events (
@@ -57,13 +51,12 @@ def init_db():
             payload TEXT NOT NULL,
             received_at TEXT NOT NULL,
             processed_at TEXT,
-            processing_status TEXT NOT NULL
+            processing_status TEXT NOT NULL,
+            merchant_account_id INTEGER
         );
         """,
     )
 
-    # 3. Recovery Cases Table (Core Financial & Recovery State)
-    # Check if the old table exists and has the old schema (REAL columns)
     cursor.execute("PRAGMA table_info(recovery_cases)")
     columns = {col[1]: col[2] for col in cursor.fetchall()}
     need_to_migrate = False
@@ -73,16 +66,14 @@ def init_db():
         need_to_migrate = True
 
     if need_to_migrate:
-        # Rename the old table
         cursor.execute("ALTER TABLE recovery_cases RENAME TO recovery_cases_old")
-        # Create the new table with INTEGER columns
         cursor.execute(
             """
             CREATE TABLE recovery_cases (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 payment_id TEXT UNIQUE NOT NULL,
                 order_id TEXT,
-                amount INTEGER NOT NULL,  -- Stores paisa
+                amount INTEGER NOT NULL,
                 currency TEXT NOT NULL,
                 payment_method TEXT,
                 wallet TEXT,
@@ -104,13 +95,13 @@ def init_db():
                 payment_link_url TEXT,
                 ai_explanation TEXT,
                 customer_message TEXT,
-                recovered_amount INTEGER NOT NULL DEFAULT 0,  -- Stores paisa
+                recovered_amount INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                merchant_account_id INTEGER
             );
             """,
         )
-        # Copy the data from the old table, converting amounts from REAL to INTEGER paisa
         cursor.execute(
             """
             INSERT INTO recovery_cases (
@@ -119,31 +110,29 @@ def init_db():
                 diagnosis_category, diagnosis_text, is_recoverable, recommended_action,
                 max_retries, retry_count, recovery_status, action_taken, action_result,
                 payment_link_id, payment_link_url, ai_explanation, customer_message,
-                recovered_amount, created_at, updated_at
+                recovered_amount, created_at, updated_at, merchant_account_id
             ) SELECT
                 id, payment_id, order_id,
-                ROUND(amount * 100) as amount,  -- Convert rupees to paisa
+                ROUND(amount * 100),
                 currency, payment_method, wallet,
                 error_code, error_source, error_step, error_reason, error_description,
                 diagnosis_category, diagnosis_text, is_recoverable, recommended_action,
                 max_retries, retry_count, recovery_status, action_taken, action_result,
                 payment_link_id, payment_link_url, ai_explanation, customer_message,
-                ROUND(recovered_amount * 100) as recovered_amount,  -- Convert rupees to paisa
-                created_at, updated_at
+                ROUND(recovered_amount * 100),
+                created_at, updated_at, NULL
             FROM recovery_cases_old
             """,
         )
-        # Drop the old table
         cursor.execute("DROP TABLE recovery_cases_old")
     else:
-        # If no migration needed, create the table if it doesn't exist
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS recovery_cases (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 payment_id TEXT UNIQUE NOT NULL,
                 order_id TEXT,
-                amount INTEGER NOT NULL,  -- Stores paisa
+                amount INTEGER NOT NULL,
                 currency TEXT NOT NULL,
                 payment_method TEXT,
                 wallet TEXT,
@@ -165,21 +154,19 @@ def init_db():
                 payment_link_url TEXT,
                 ai_explanation TEXT,
                 customer_message TEXT,
-                recovered_amount INTEGER NOT NULL DEFAULT 0,  -- Stores paisa
+                recovered_amount INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                merchant_account_id INTEGER
             );
             """,
         )
 
-        # 3. Audit Trail Table (Immutable Decision Log)
-    # Migrate legacy audit_trail schema from `timestamp` to `created_at`
     cursor.execute("PRAGMA table_info(audit_trail)")
     audit_columns = {col[1]: col[2] for col in cursor.fetchall()}
 
     if "timestamp" in audit_columns:
         cursor.execute("ALTER TABLE audit_trail RENAME TO audit_trail_old")
-
         cursor.execute(
             """
             CREATE TABLE audit_trail (
@@ -190,25 +177,19 @@ def init_db():
                 action TEXT NOT NULL,
                 details TEXT NOT NULL,
                 created_at TEXT NOT NULL,
+                merchant_account_id INTEGER,
                 FOREIGN KEY (case_id) REFERENCES recovery_cases(id)
             );
             """
         )
-
         if "created_at" in audit_columns:
             cursor.execute(
                 """
                 INSERT INTO audit_trail (
-                    id, case_id, payment_id, actor, action, details, created_at
+                    id, case_id, payment_id, actor, action, details, created_at, merchant_account_id
                 )
-                SELECT
-                    id,
-                    case_id,
-                    payment_id,
-                    actor,
-                    action,
-                    details,
-                    COALESCE(created_at, timestamp)
+                SELECT id, case_id, payment_id, actor, action, details,
+                       COALESCE(created_at, timestamp), NULL
                 FROM audit_trail_old
                 """
             )
@@ -216,22 +197,13 @@ def init_db():
             cursor.execute(
                 """
                 INSERT INTO audit_trail (
-                    id, case_id, payment_id, actor, action, details, created_at
+                    id, case_id, payment_id, actor, action, details, created_at, merchant_account_id
                 )
-                SELECT
-                    id,
-                    case_id,
-                    payment_id,
-                    actor,
-                    action,
-                    details,
-                    timestamp
+                SELECT id, case_id, payment_id, actor, action, details, timestamp, NULL
                 FROM audit_trail_old
                 """
             )
-
         cursor.execute("DROP TABLE audit_trail_old")
-
     else:
         cursor.execute(
             """
@@ -243,39 +215,47 @@ def init_db():
                 action TEXT NOT NULL,
                 details TEXT NOT NULL,
                 created_at TEXT NOT NULL,
+                merchant_account_id INTEGER,
                 FOREIGN KEY (case_id) REFERENCES recovery_cases(id)
             );
-            """
+            """,
         )
+
+    for table, column in (
+        ("webhook_events", "merchant_account_id"),
+        ("payment_events", "merchant_account_id"),
+        ("recovery_cases", "merchant_account_id"),
+        ("audit_trail", "merchant_account_id"),
+    ):
+        existing = {col[1] for col in cursor.execute(f"PRAGMA table_info({table})").fetchall()}
+        if column not in existing:
+            cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} INTEGER")
 
     conn.commit()
     conn.close()
     logger.info("Database initialized: %s", DATABASE_PATH)
+
+
 def is_event_processed(event_id: str) -> bool:
-    """Check if a webhook event ID has already been recorded and processed.
-    Returns True if already processed, False otherwise.
-    """
     if not event_id:
         return False
     conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT id FROM webhook_events WHERE event_id = ?", (event_id,))
-    row = cursor.fetchone()
-    conn.close()
-    return row is not None
+    try:
+        row = conn.execute("SELECT id FROM webhook_events WHERE event_id = ?", (event_id,)).fetchone()
+        return row is not None
+    finally:
+        conn.close()
 
 
-def record_webhook_event(event_id: str, event_type: str, payload_dict: dict, status: str = "PROCESSED") -> bool:
-    """Atomically record a webhook event; return False if it was already seen."""
+def record_webhook_event(event_id: str, event_type: str, payload_dict: dict, status: str = "PROCESSED", merchant_account_id: int | None = None) -> bool:
     now = datetime.now(timezone.utc).isoformat()
     payload_json = json.dumps(payload_dict)
     conn = get_connection()
-    cursor = conn.cursor()
     try:
-        cursor.execute(
-            """INSERT INTO webhook_events (event_id, event_type, payload, status, received_at)
-            VALUES (?, ?, ?, ?, ?)""",
-            (event_id, event_type, payload_json, status, now),
+        conn.execute(
+            """INSERT INTO webhook_events (event_id, event_type, payload, status, received_at, merchant_account_id)
+            VALUES (?, ?, ?, ?, ?, ?)""",
+            (event_id, event_type, payload_json, status, now, merchant_account_id),
         )
         conn.commit()
         return True
@@ -286,24 +266,21 @@ def record_webhook_event(event_id: str, event_type: str, payload_dict: dict, sta
 
 
 def update_webhook_event_status(event_id: str, status: str) -> None:
-    """Update the status of an already-reserved webhook event."""
     conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("UPDATE webhook_events SET status = ? WHERE event_id = ?", (status, event_id))
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute("UPDATE webhook_events SET status = ? WHERE event_id = ?", (status, event_id))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def release_processing_webhook_event(event_id: str) -> None:
-    """Release a failed processing reservation so the gateway can retry it."""
     conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "DELETE FROM webhook_events WHERE event_id = ? AND status = 'PROCESSING'",
-        (event_id,),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute("DELETE FROM webhook_events WHERE event_id = ? AND status = 'PROCESSING'", (event_id,))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def record_payment_event(
@@ -317,12 +294,8 @@ def record_payment_event(
     currency: str | None = None,
     payment_status: str | None = None,
     processing_status: str = "PROCESSED",
+    merchant_account_id: int | None = None,
 ) -> bool:
-    """Record one immutable payment lifecycle event.
-
-    The unique event ID makes this operation idempotent independently of the
-    webhook reservation table.
-    """
     now = datetime.now(timezone.utc).isoformat()
     conn = get_connection()
     try:
@@ -331,22 +304,14 @@ def record_payment_event(
             INSERT INTO payment_events (
                 event_id, event_type, payment_id, order_id, amount_paise,
                 currency, payment_status, source, payload, received_at,
-                processed_at, processing_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                processed_at, processing_status, merchant_account_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                event_id,
-                event_type,
-                payment_id,
-                order_id,
-                amount_paise,
-                currency,
-                payment_status,
-                source,
-                json.dumps(payload_dict),
-                now,
+                event_id, event_type, payment_id, order_id, amount_paise,
+                currency, payment_status, source, json.dumps(payload_dict), now,
                 now if processing_status == "PROCESSED" else None,
-                processing_status,
+                processing_status, merchant_account_id,
             ),
         )
         conn.commit()
@@ -358,16 +323,11 @@ def record_payment_event(
 
 
 def update_payment_event_status(event_id: str, processing_status: str) -> None:
-    """Update processing metadata without changing the immutable event data."""
     processed_at = datetime.now(timezone.utc).isoformat() if processing_status == "PROCESSED" else None
     conn = get_connection()
     try:
         conn.execute(
-            """
-            UPDATE payment_events
-            SET processing_status = ?, processed_at = ?
-            WHERE event_id = ?
-            """,
+            "UPDATE payment_events SET processing_status = ?, processed_at = ? WHERE event_id = ?",
             (processing_status, processed_at, event_id),
         )
         conn.commit()
@@ -376,16 +336,15 @@ def update_payment_event_status(event_id: str, processing_status: str) -> None:
 
 
 def retry_failed_payment_event(event_id: str) -> bool:
-    """Re-claim a lifecycle event after its first processing attempt failed."""
     conn = get_connection()
     try:
         cursor = conn.execute(
             """
             UPDATE payment_events
-            SET processing_status = ?, processed_at = NULL
+            SET processing_status = 'PROCESSING', processed_at = NULL
             WHERE event_id = ? AND processing_status = 'FAILED'
             """,
-            ("PROCESSING", event_id),
+            (event_id,),
         )
         conn.commit()
         return cursor.rowcount == 1
@@ -394,76 +353,47 @@ def retry_failed_payment_event(event_id: str) -> bool:
 
 
 def has_payment_event(event_id: str) -> bool:
-    """Return whether a lifecycle event ID is already stored."""
     conn = get_connection()
     try:
-        row = conn.execute(
-            "SELECT 1 FROM payment_events WHERE event_id = ?",
-            (event_id,),
-        ).fetchone()
+        row = conn.execute("SELECT 1 FROM payment_events WHERE event_id = ?", (event_id,)).fetchone()
         return row is not None
     finally:
         conn.close()
 
 
-def get_payment_events(
-    payment_id: str | None = None,
-    order_id: str | None = None,
-) -> list[dict]:
-    """Return lifecycle events filtered by payment ID and/or order ID."""
+def get_payment_events(payment_id: str | None = None, order_id: str | None = None, merchant_account_id: int | None = None) -> list[dict]:
     clauses = []
-    values: list[str] = []
+    values: list[str | int] = []
     if payment_id is not None:
         clauses.append("payment_id = ?")
         values.append(payment_id)
     if order_id is not None:
         clauses.append("order_id = ?")
         values.append(order_id)
+    if merchant_account_id is not None:
+        clauses.append("merchant_account_id = ?")
+        values.append(merchant_account_id)
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     conn = get_connection()
     try:
-        rows = conn.execute(
-            f"SELECT * FROM payment_events{where} ORDER BY id ASC",
-            values,
-        ).fetchall()
+        rows = conn.execute(f"SELECT * FROM payment_events{where} ORDER BY id ASC", values).fetchall()
         return [dict(row) for row in rows]
     finally:
         conn.close()
 
 
-def get_latest_payment_event(payment_id: str) -> dict | None:
-    """Return the most recently received lifecycle event for a payment."""
-    conn = get_connection()
-    try:
-        row = conn.execute(
-            """
-            SELECT * FROM payment_events
-            WHERE payment_id = ?
-            ORDER BY id DESC
-            LIMIT 1
-            """,
-            (payment_id,),
-        ).fetchone()
-        return dict(row) if row else None
-    finally:
-        conn.close()
+def get_latest_payment_event(payment_id: str, merchant_account_id: int | None = None) -> dict | None:
+    events = get_payment_events(payment_id=payment_id, merchant_account_id=merchant_account_id)
+    return events[-1] if events else None
 
 
-def get_payment_lifecycle(payment_id: str) -> dict:
-    """Derive the canonical state of a payment from its persisted events."""
-    events = get_payment_events(payment_id=payment_id)
+def get_payment_lifecycle(payment_id: str, merchant_account_id: int | None = None) -> dict:
+    events = get_payment_events(payment_id=payment_id, merchant_account_id=merchant_account_id)
     if not events:
-        return {
-            "payment_id": payment_id,
-            "status": None,
-            "is_successful": False,
-            "amount_paise": 0,
-            "currency": None,
-            "events": [],
-        }
+        return {"payment_id": payment_id, "status": None, "is_successful": False, "amount_paise": 0, "currency": None, "events": []}
 
-    successful = [event for event in events if event["event_type"] in {"payment.captured", "order.paid"}]
-    captured = next((event for event in successful if event["event_type"] == "payment.captured"), None)
+    successful = [e for e in events if e["event_type"] in {"payment.captured", "order.paid"}]
+    captured = next((e for e in successful if e["event_type"] == "payment.captured"), None)
     latest = events[-1]
     canonical = captured or (successful[-1] if successful else None)
     status = "captured" if canonical else latest["payment_status"] or latest["event_type"].split(".")[-1]
@@ -477,38 +407,18 @@ def get_payment_lifecycle(payment_id: str) -> dict:
     }
 
 
-def get_successful_payments() -> list[dict]:
-    """Return one canonical record per successful payment or paid order.
-
-    Payment and order identifiers are connected so payment.captured followed
-    by order.paid is represented by one successful payment.
-    """
-    events = get_payment_events()
-    successful = [
-        event for event in events
-        if event["processing_status"] == "PROCESSED"
-        and event["event_type"] in {"payment.captured", "order.paid"}
-    ]
+def get_successful_payments(merchant_account_id: int | None = None) -> list[dict]:
+    events = get_payment_events(merchant_account_id=merchant_account_id)
+    successful = [e for e in events if e["processing_status"] == "PROCESSED" and e["event_type"] in {"payment.captured", "order.paid"}]
     groups: list[dict] = []
     payment_groups: dict[str, dict] = {}
     for event in successful:
         payment_id = event["payment_id"]
         order_id = event["order_id"]
-        if payment_id:
-            matching = payment_groups.get(payment_id)
-            if matching is None and order_id:
-                order_groups = [
-                    group for group in groups
-                    if order_id in group["order_ids"]
-                    and not group["payment_ids"]
-                ]
-                matching = order_groups[0] if len(order_groups) == 1 else None
-        else:
-            order_groups = [
-                group for group in groups
-                if order_id and order_id in group["order_ids"]
-            ]
-            matching = order_groups[0] if len(order_groups) == 1 else None
+        matching = payment_groups.get(payment_id) if payment_id else None
+        if matching is None and order_id:
+            candidates = [g for g in groups if order_id in g["order_ids"] and (not payment_id or not g["payment_ids"])]
+            matching = candidates[0] if len(candidates) == 1 else None
         if matching is None:
             matching = {"events": [], "payment_ids": set(), "order_ids": set()}
             groups.append(matching)
@@ -521,142 +431,112 @@ def get_successful_payments() -> list[dict]:
 
     canonical_payments = []
     for group in groups:
-        captured = next(
-            (event for event in group["events"] if event["event_type"] == "payment.captured"),
-            None,
-        )
+        captured = next((e for e in group["events"] if e["event_type"] == "payment.captured"), None)
         canonical = captured or group["events"][-1]
-        canonical_payments.append(
-            {
-                "payment_id": next(iter(group["payment_ids"]), None),
-                "order_id": next(iter(group["order_ids"]), None),
-                "amount_paise": int(canonical.get("amount_paise") or 0),
-                "currency": canonical.get("currency"),
-                "status": "captured",
-                "event_id": canonical["event_id"],
-                "event_type": canonical["event_type"],
-            }
-        )
+        canonical_payments.append({
+            "payment_id": next(iter(group["payment_ids"]), None),
+            "order_id": next(iter(group["order_ids"]), None),
+            "amount_paise": int(canonical.get("amount_paise") or 0),
+            "currency": canonical.get("currency"),
+            "status": "captured",
+            "event_id": canonical["event_id"],
+            "event_type": canonical["event_type"],
+        })
     return canonical_payments
 
 
-def get_captured_revenue() -> int:
-    """Return captured revenue in integer paise, counted once per payment/order."""
-    return sum(payment["amount_paise"] for payment in get_successful_payments())
+def get_captured_revenue(merchant_account_id: int | None = None) -> int:
+    return sum(payment["amount_paise"] for payment in get_successful_payments(merchant_account_id=merchant_account_id))
 
 
-def get_payment_status(payment_id: str) -> str | None:
-    """Return the derived canonical status for a payment."""
-    return get_payment_lifecycle(payment_id)["status"]
+def get_payment_status(payment_id: str, merchant_account_id: int | None = None) -> str | None:
+    return get_payment_lifecycle(payment_id, merchant_account_id=merchant_account_id)["status"]
 
 
-def add_audit_log(payment_id: str, actor: str, action: str, details: str, case_id: int = None):
-    """Append an immutable log entry to the audit_trail table.
-    Actors can be: 'SYSTEM', 'DIAGNOSIS_RULE', 'POLICY_GATE', 'AI_AGENT', 'RECOVERY_ENGINE'.
-    """
+def add_audit_log(payment_id: str, actor: str, action: str, details: str, case_id: int = None, merchant_account_id: int | None = None):
     now = datetime.now(timezone.utc).isoformat()
+    if merchant_account_id is None and case_id is not None:
+        conn = get_connection()
+        try:
+            row = conn.execute("SELECT merchant_account_id FROM recovery_cases WHERE id = ?", (case_id,)).fetchone()
+            if row and row["merchant_account_id"] is not None:
+                merchant_account_id = row["merchant_account_id"]
+        finally:
+            conn.close()
     conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        INSERT INTO audit_trail (case_id, payment_id, actor, action, details, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        (case_id, payment_id, actor, action, details, now),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            """
+            INSERT INTO audit_trail (case_id, payment_id, actor, action, details, created_at, merchant_account_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (case_id, payment_id, actor, action, details, now, merchant_account_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
-# The rest of the original functions are copied verbatim below.
 
-def create_or_get_recovery_case(payment: dict, diagnosis: dict) -> tuple[dict, bool]:
+def create_or_get_recovery_case(payment: dict, diagnosis: dict, merchant_account_id: int | None = None) -> tuple[dict, bool]:
     payment_id = payment.get("id")
     order_id = payment.get("order_id")
-    amount_paisa = payment.get("amount", 0)  # Store in paisa
+    amount_paisa = payment.get("amount", 0)
     currency = payment.get("currency", "INR")
     payment_method = payment.get("method")
     wallet = payment.get("wallet")
-
     error_code = payment.get("error_code")
     error_source = payment.get("error_source")
     error_step = payment.get("error_step")
     error_reason = payment.get("error_reason")
     error_description = payment.get("error_description")
-
     diagnosis_category = diagnosis.get("category")
     diagnosis_text = diagnosis.get("diagnosis")
     is_recoverable = 1 if diagnosis.get("recoverable") else 0
     recommended_action = diagnosis.get("recommended_action")
     max_retries = diagnosis.get("max_retries", 0)
-
     now = datetime.now(timezone.utc).isoformat()
 
     conn = get_connection()
-    cursor = conn.cursor()
+    try:
+        row = conn.execute("SELECT * FROM recovery_cases WHERE payment_id = ?", (payment_id,)).fetchone()
+        if row:
+            case = dict(row)
+            case["amount"] = case["amount"] / 100.0
+            case["recovered_amount"] = case["recovered_amount"] / 100.0
+            return case, False
 
-    cursor.execute("SELECT * FROM recovery_cases WHERE payment_id = ?", (payment_id,))
-    existing = cursor.fetchone()
-    if existing:
-        # Convert existing case from paisa to rupees for the rest of the app
-        existing_dict = dict(existing)
-        existing_dict['amount'] = existing_dict['amount'] / 100.0
-        existing_dict['recovered_amount'] = existing_dict['recovered_amount'] / 100.0
-        case_dict = existing_dict
-        conn.close()
-        return case_dict, False
-
-    cursor.execute("""
-        INSERT INTO recovery_cases (
-            payment_id, order_id, amount, currency, payment_method, wallet,
-            error_code, error_source, error_step, error_reason, error_description,
-            diagnosis_category, diagnosis_text, is_recoverable, recommended_action,
-            max_retries, retry_count, recovery_status, action_taken, action_result,
-            payment_link_id, payment_link_url, ai_explanation, customer_message,
-            recovered_amount, created_at, updated_at
-        ) VALUES (
-            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        conn.execute(
+            """
+            INSERT INTO recovery_cases (
+                payment_id, order_id, amount, currency, payment_method, wallet,
+                error_code, error_source, error_step, error_reason, error_description,
+                diagnosis_category, diagnosis_text, is_recoverable, recommended_action,
+                max_retries, retry_count, recovery_status, action_taken, action_result,
+                payment_link_id, payment_link_url, ai_explanation, customer_message,
+                recovered_amount, created_at, updated_at, merchant_account_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                payment_id, order_id, amount_paisa, currency, payment_method, wallet,
+                error_code, error_source, error_step, error_reason, error_description,
+                diagnosis_category, diagnosis_text, is_recoverable, recommended_action,
+                max_retries, 0, "DETECTED", "", "", "", "", "", "", 0,
+                now, now, merchant_account_id,
+            ),
         )
-    """, (
-        payment_id,
-        order_id,
-        amount_paisa,
-        currency,
-        payment_method,
-        wallet,
-        error_code,
-        error_source,
-        error_step,
-        error_reason,
-        error_description,
-        diagnosis_category,
-        diagnosis_text,
-        is_recoverable,
-        recommended_action,
-        max_retries,
-        0,  # retry_count
-        'DETECTED',  # recovery_status
-        '',  # action_taken
-        '',  # action_result
-        '',  # payment_link_id
-        '',  # payment_link_url
-        '',  # ai_explanation
-        '',  # customer_message
-        0,  # recovered_amount in paisa
-        now,
-        now,
-    ))
-    case_id = cursor.lastrowid
-    conn.commit()
-    cursor.execute("SELECT * FROM recovery_cases WHERE id = ?", (case_id,))
-    new_case = dict(cursor.fetchone())
-    # Convert new case from paisa to rupees for the rest of the app
-    new_case['amount'] = new_case['amount'] / 100.0
-    new_case['recovered_amount'] = new_case['recovered_amount'] / 100.0
-    conn.close()
+        case_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
+        conn.commit()
+        new_case = dict(conn.execute("SELECT * FROM recovery_cases WHERE id = ?", (case_id,)).fetchone())
+    finally:
+        conn.close()
+
+    new_case["amount"] = new_case["amount"] / 100.0
+    new_case["recovered_amount"] = new_case["recovered_amount"] / 100.0
 
     add_audit_log(
         payment_id=payment_id,
         case_id=case_id,
+        merchant_account_id=merchant_account_id,
         actor="SYSTEM",
         action="PAYMENT_FAILURE_DETECTED",
         details=f"Payment failure received for Rs. {new_case['amount']} (Method: {payment_method}, Reason: {error_reason})",
@@ -664,61 +544,61 @@ def create_or_get_recovery_case(payment: dict, diagnosis: dict) -> tuple[dict, b
     add_audit_log(
         payment_id=payment_id,
         case_id=case_id,
+        merchant_account_id=merchant_account_id,
         actor="DIAGNOSIS_RULE",
         action="DIAGNOSIS_PERFORMED",
-        details=f"Classified as '{diagnosis_category}' (Recoverable: {bool(is_recoverable)}, Action: {recommended_action}, Max Retries: {max_retries})\n",
+        details=f"Classified as '{diagnosis_category}' (Recoverable: {bool(is_recoverable)}, Action: {recommended_action}, Max Retries: {max_retries})",
     )
     return new_case, True
-def get_all_recovery_cases():
-    """Fetch all recovery cases from the database."""
+
+
+def get_all_recovery_cases(merchant_account_id: int | None = None):
     conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM recovery_cases ORDER BY id DESC")
-    rows = [dict(row) for row in cursor.fetchall()]
-    conn.close()
-    # Convert each case from paisa to rupees
-    for row in rows:
-        row['amount'] = row['amount'] / 100.0
-        row['recovered_amount'] = row['recovered_amount'] / 100.0
-    return rows
+    try:
+        if merchant_account_id is None:
+            rows = conn.execute("SELECT * FROM recovery_cases ORDER BY id DESC").fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM recovery_cases WHERE merchant_account_id = ? ORDER BY id DESC", (merchant_account_id,)).fetchall()
+        result = [dict(row) for row in rows]
+    finally:
+        conn.close()
+    for row in result:
+        row["amount"] = row["amount"] / 100.0
+        row["recovered_amount"] = row["recovered_amount"] / 100.0
+    return result
+
+
 def reset_batch_demo_cases(prefix: str = "demo_batch_v1_") -> None:
-    """Remove only synthetic batch-demo cases and their audit entries."""
     conn = get_connection()
-    cursor = conn.cursor()
+    try:
+        rows = conn.execute("SELECT id FROM recovery_cases WHERE payment_id LIKE ?", (f"{prefix}%",)).fetchall()
+        case_ids = [row["id"] for row in rows]
+        if case_ids:
+            placeholders = ",".join("?" * len(case_ids))
+            conn.execute(f"DELETE FROM audit_trail WHERE case_id IN ({placeholders})", case_ids)
+        conn.execute("DELETE FROM recovery_cases WHERE payment_id LIKE ?", (f"{prefix}%",))
+        conn.commit()
+    finally:
+        conn.close()
 
-    cursor.execute(
-        "SELECT id FROM recovery_cases WHERE payment_id LIKE ?",
-        (f"{prefix}%",),
-    )
-    case_ids = [row["id"] for row in cursor.fetchall()]
 
-    if case_ids:
-        placeholders = ",".join("?" * len(case_ids))
-        cursor.execute(
-            f"DELETE FROM audit_trail WHERE case_id IN ({placeholders})",
-            case_ids,
-        )
-
-    cursor.execute(
-        "DELETE FROM recovery_cases WHERE payment_id LIKE ?",
-        (f"{prefix}%",),
-    )
-
-    conn.commit()
-    conn.close()
-def get_case_by_payment_id(payment_id: str):
+def get_case_by_payment_id(payment_id: str, merchant_account_id: int | None = None):
     conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM recovery_cases WHERE payment_id = ?", (payment_id,))
-    row = cursor.fetchone()
-    conn.close()
-    if row:
-        case = dict(row)
-        # Convert from paisa to rupees
-        case['amount'] = case['amount'] / 100.0
-        case['recovered_amount'] = case['recovered_amount'] / 100.0
-        return case
-    return None
+    try:
+        if merchant_account_id is None:
+            row = conn.execute("SELECT * FROM recovery_cases WHERE payment_id = ?", (payment_id,)).fetchone()
+        else:
+            row = conn.execute("SELECT * FROM recovery_cases WHERE payment_id = ? AND merchant_account_id = ?", (payment_id, merchant_account_id)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    case = dict(row)
+    case["amount"] = case["amount"] / 100.0
+    case["recovered_amount"] = case["recovered_amount"] / 100.0
+    return case
+
+
 def update_case_policy(case_id: int, payment_id: str, policy_result: dict) -> dict:
     now = datetime.now(timezone.utc).isoformat()
     next_status = policy_result.get("next_status", "ESCALATED")
@@ -727,265 +607,206 @@ def update_case_policy(case_id: int, payment_id: str, policy_result: dict) -> di
     reason = policy_result.get("reason", "")
     guardrail = policy_result.get("guardrail_triggered")
     conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        UPDATE recovery_cases
-        SET recovery_status = ?,
-            action_taken = ?,
-            updated_at = ?
-        WHERE id = ?
-    """, (
-        next_status,
-        action_allowed,
-        now,
-        case_id,
-    ))
-    conn.commit()
-    cursor.execute("SELECT * FROM recovery_cases WHERE id = ?", (case_id,))
-    updated_case = dict(cursor.fetchone())
-    # Convert from paisa to rupees
-    updated_case['amount'] = updated_case['amount'] / 100.0
-    updated_case['recovered_amount'] = updated_case['recovered_amount'] / 100.0
-    conn.close()
+    try:
+        conn.execute("UPDATE recovery_cases SET recovery_status = ?, action_taken = ?, updated_at = ? WHERE id = ?", (next_status, action_allowed, now, case_id))
+        conn.commit()
+        updated_case = dict(conn.execute("SELECT * FROM recovery_cases WHERE id = ?", (case_id,)).fetchone())
+    finally:
+        conn.close()
+    updated_case["amount"] = updated_case["amount"] / 100.0
+    updated_case["recovered_amount"] = updated_case["recovered_amount"] / 100.0
     guardrail_note = f" [Guardrail: {guardrail}]" if guardrail else ""
-    add_audit_log(
-        payment_id=payment_id,
-        case_id=case_id,
-        actor="POLICY_GATE",
-        action=f"POLICY_{decision}",
-        details=f"Allowed Action: '{action_allowed}' -> Status: '{next_status}'. Rationale: {reason}{guardrail_note}",
-    )
+    add_audit_log(payment_id, "POLICY_GATE", f"POLICY_{decision}", f"Allowed Action: '{action_allowed}' -> Status: '{next_status}'. Rationale: {reason}{guardrail_note}", case_id=case_id)
     return updated_case
+
+
 def increment_retry_count(case_id: int, payment_id: str) -> dict:
     now = datetime.now(timezone.utc).isoformat()
     conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        UPDATE recovery_cases
-        SET retry_count = retry_count + 1,
-            updated_at = ?
-        WHERE id = ?
-    """, (
-        now,
-        case_id,
-    ))
-    conn.commit()
-    cursor.execute("SELECT * FROM recovery_cases WHERE id = ?", (case_id,))
-    updated_case = dict(cursor.fetchone())
-    # Convert from paisa to rupees
-    updated_case['amount'] = updated_case['amount'] / 100.0
-    updated_case['recovered_amount'] = updated_case['recovered_amount'] / 100.0
-    conn.close()
-    add_audit_log(
-        payment_id=payment_id,
-        case_id=case_id,
-        actor="RECOVERY_ENGINE",
-        action="RETRY_ATTEMPT_RECORDED",
-        details=f"Retry attempt #{updated_case['retry_count']} executed of max {updated_case['max_retries']}.",
-    )
+    try:
+        conn.execute("UPDATE recovery_cases SET retry_count = retry_count + 1, updated_at = ? WHERE id = ?", (now, case_id))
+        conn.commit()
+        updated_case = dict(conn.execute("SELECT * FROM recovery_cases WHERE id = ?", (case_id,)).fetchone())
+    finally:
+        conn.close()
+    updated_case["amount"] = updated_case["amount"] / 100.0
+    updated_case["recovered_amount"] = updated_case["recovered_amount"] / 100.0
+    add_audit_log(payment_id, "RECOVERY_ENGINE", "RETRY_ATTEMPT_RECORDED", f"Retry attempt #{updated_case['retry_count']} executed of max {updated_case['max_retries']}.", case_id=case_id)
     return updated_case
+
+
 def update_case_recovery_action(case_id: int, payment_id: str, recovery_status: str, action_result: str, payment_link_id: str = None, payment_link_url: str = None) -> dict:
     now = datetime.now(timezone.utc).isoformat()
     conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        UPDATE recovery_cases
-        SET recovery_status = ?,
-            action_result = ?,
-            payment_link_id = COALESCE(?, payment_link_id),
-            payment_link_url = COALESCE(?, payment_link_url),
-            updated_at = ?
-        WHERE id = ?
-    """, (
-        recovery_status,
-        action_result,
-        payment_link_id,
-        payment_link_url,
-        now,
-        case_id,
-    ))
-    conn.commit()
-    cursor.execute("SELECT * FROM recovery_cases WHERE id = ?", (case_id,))
-    updated_case = dict(cursor.fetchone())
-    # Convert from paisa to rupees
-    updated_case['amount'] = updated_case['amount'] / 100.0
-    updated_case['recovered_amount'] = updated_case['recovered_amount'] / 100.0
-    conn.close()
+    try:
+        conn.execute(
+            """
+            UPDATE recovery_cases
+            SET recovery_status = ?, action_result = ?,
+                payment_link_id = COALESCE(?, payment_link_id),
+                payment_link_url = COALESCE(?, payment_link_url),
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (recovery_status, action_result, payment_link_id, payment_link_url, now, case_id),
+        )
+        conn.commit()
+        updated_case = dict(conn.execute("SELECT * FROM recovery_cases WHERE id = ?", (case_id,)).fetchone())
+    finally:
+        conn.close()
+    updated_case["amount"] = updated_case["amount"] / 100.0
+    updated_case["recovered_amount"] = updated_case["recovered_amount"] / 100.0
     return updated_case
+
+
 def find_case_for_recovery_event(order_id: str = None, payment_link_id: str = None, original_payment_id: str = None):
     conn = get_connection()
-    cursor = conn.cursor()
-    case = None
-    if payment_link_id:
-        cursor.execute("SELECT * FROM recovery_cases WHERE payment_link_id = ? ORDER BY id DESC LIMIT 1", (payment_link_id,))
-        case = cursor.fetchone()
-    if not case and original_payment_id:
-        cursor.execute("SELECT * FROM recovery_cases WHERE payment_id = ? ORDER BY id DESC LIMIT 1", (original_payment_id,))
-        case = cursor.fetchone()
-    if not case and order_id:
-        cursor.execute("SELECT * FROM recovery_cases WHERE order_id = ? AND recovery_status != 'RECOVERED' ORDER BY id DESC LIMIT 1", (order_id,))
-        case = cursor.fetchone()
-    conn.close()
-    if case:
-        case = dict(case)
-        # Convert from paisa to rupees
-        case['amount'] = case['amount'] / 100.0
-        case['recovered_amount'] = case['recovered_amount'] / 100.0
+    try:
+        row = None
+        if payment_link_id:
+            row = conn.execute("SELECT * FROM recovery_cases WHERE payment_link_id = ? ORDER BY id DESC LIMIT 1", (payment_link_id,)).fetchone()
+        if not row and original_payment_id:
+            row = conn.execute("SELECT * FROM recovery_cases WHERE payment_id = ? ORDER BY id DESC LIMIT 1", (original_payment_id,)).fetchone()
+        if not row and order_id:
+            rows = conn.execute("SELECT * FROM recovery_cases WHERE order_id = ? AND recovery_status != 'RECOVERED' ORDER BY id DESC LIMIT 2", (order_id,)).fetchall()
+            row = rows[0] if len(rows) == 1 else None
+    finally:
+        conn.close()
+    if not row:
+        return None
+    case = dict(row)
+    case["amount"] = case["amount"] / 100.0
+    case["recovered_amount"] = case["recovered_amount"] / 100.0
     return case
 
 
 def find_case_for_captured_payment(payment_id: str = None, order_id: str = None):
-    """Match a successful payment to one existing case using strict IDs."""
     conn = get_connection()
     try:
         if payment_id:
-            row = conn.execute(
-                "SELECT * FROM recovery_cases WHERE payment_id = ? LIMIT 1",
-                (payment_id,),
-            ).fetchone()
+            row = conn.execute("SELECT * FROM recovery_cases WHERE payment_id = ? LIMIT 1", (payment_id,)).fetchone()
         elif order_id:
-            rows = conn.execute(
-                "SELECT * FROM recovery_cases WHERE order_id = ? AND recovery_status != 'RECOVERED'",
-                (order_id,),
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM recovery_cases WHERE order_id = ? AND recovery_status != 'RECOVERED'", (order_id,)).fetchall()
             row = rows[0] if len(rows) == 1 else None
         else:
             row = None
-        if not row:
-            return None
-        case = dict(row)
-        case["amount"] = case["amount"] / 100.0
-        case["recovered_amount"] = case["recovered_amount"] / 100.0
-        return case
     finally:
         conn.close()
+    if not row:
+        return None
+    case = dict(row)
+    case["amount"] = case["amount"] / 100.0
+    case["recovered_amount"] = case["recovered_amount"] / 100.0
+    return case
 
 
-def mark_case_recovered_paisa(
-    case_id: int,
-    payment_id: str,
-    recovered_amount_paisa: int,
-    new_payment_id: str,
-    event_type: str,
-) -> tuple[dict, bool]:
-    """Atomically mark a case recovered and audit only the first transition."""
+def mark_case_recovered_paisa(case_id: int, payment_id: str, recovered_amount_paisa: int, new_payment_id: str, event_type: str) -> tuple[dict, bool]:
     now = datetime.now(timezone.utc).isoformat()
     conn = get_connection()
     try:
-        cursor = conn.cursor()
-        cursor.execute("""
-        UPDATE recovery_cases
-        SET recovery_status = 'RECOVERED',
-            recovered_amount = ?,
-            action_result = ?,
-            updated_at = ?
-        WHERE id = ?
-          AND recovery_status != 'RECOVERED'
-    """, (
-        recovered_amount_paisa,
-        f"RECOVERED via {event_type} ({new_payment_id})",
-        now,
-        case_id,
-    ))
+        cursor = conn.execute(
+            """
+            UPDATE recovery_cases
+            SET recovery_status = 'RECOVERED', recovered_amount = ?, action_result = ?, updated_at = ?
+            WHERE id = ? AND recovery_status != 'RECOVERED'
+            """,
+            (recovered_amount_paisa, f"RECOVERED via {event_type} ({new_payment_id})", now, case_id),
+        )
         changed = cursor.rowcount == 1
         conn.commit()
-        cursor.execute("SELECT * FROM recovery_cases WHERE id = ?", (case_id,))
-        updated_case = dict(cursor.fetchone())
+        updated_case = dict(conn.execute("SELECT * FROM recovery_cases WHERE id = ?", (case_id,)).fetchone())
     finally:
         conn.close()
-
     updated_case["amount"] = updated_case["amount"] / 100.0
     updated_case["recovered_amount"] = updated_case["recovered_amount"] / 100.0
     if changed:
         add_audit_log(
-            payment_id=payment_id,
+            payment_id,
+            "RECOVERY_ENGINE",
+            "REVENUE_RECOVERED",
+            f"RECOVERY_CONFIRMED: recovered Rs. {updated_case['recovered_amount']} from successful {event_type} event ({new_payment_id}).",
             case_id=case_id,
-            actor="RECOVERY_ENGINE",
-            action="REVENUE_RECOVERED",
-            details=(
-                f"RECOVERY_CONFIRMED: recovered Rs. {updated_case['recovered_amount']} "
-                f"from successful {event_type} event ({new_payment_id})."
-            ),
         )
     return updated_case, changed
 
 
 def mark_case_recovered(case_id: int, payment_id: str, recovered_amount: float, new_payment_id: str, event_type: str) -> dict:
-    """Compatibility wrapper accepting rupees at the existing call boundary."""
-    updated_case, _ = mark_case_recovered_paisa(
-        case_id=case_id,
-        payment_id=payment_id,
-        recovered_amount_paisa=int(round(recovered_amount * 100)),
-        new_payment_id=new_payment_id,
-        event_type=event_type,
-    )
+    updated_case, _ = mark_case_recovered_paisa(case_id, payment_id, int(round(recovered_amount * 100)), new_payment_id, event_type)
     return updated_case
+
+
 def update_case_ai_insights(case_id: int, payment_id: str, ai_explanation: str, customer_message: str, provider: str = "template") -> dict:
     now = datetime.now(timezone.utc).isoformat()
     conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        UPDATE recovery_cases
-        SET ai_explanation = ?,
-            customer_message = ?,
-            updated_at = ?
-        WHERE id = ?
-        """,
-        (ai_explanation, customer_message, now, case_id),
-    )
-    conn.commit()
-    cursor.execute("SELECT * FROM recovery_cases WHERE id = ?", (case_id,))
-    updated_case = dict(cursor.fetchone())
-    conn.close()
+    try:
+        conn.execute("UPDATE recovery_cases SET ai_explanation = ?, customer_message = ?, updated_at = ? WHERE id = ?", (ai_explanation, customer_message, now, case_id))
+        conn.commit()
+        updated_case = dict(conn.execute("SELECT * FROM recovery_cases WHERE id = ?", (case_id,)).fetchone())
+    finally:
+        conn.close()
+    updated_case["amount"] = updated_case["amount"] / 100.0
+    updated_case["recovered_amount"] = updated_case["recovered_amount"] / 100.0
     preview = (ai_explanation[:80] + "...") if len(ai_explanation) > 80 else ai_explanation
-    add_audit_log(
-        payment_id=payment_id,
-        case_id=case_id,
-        actor="AI_AGENT",
-        action="AI_EXPLANATION_GENERATED",
-        details=f"[{provider.upper()}] {preview}",
-    )
+    add_audit_log(payment_id, "AI_AGENT", "AI_EXPLANATION_GENERATED", f"[{provider.upper()}] {preview}", case_id=case_id)
     return updated_case
 
-def get_audit_trail_for_case(payment_id: str):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT * FROM audit_trail WHERE payment_id = ? ORDER BY id ASC",
-        (payment_id,)
-    )
-    rows = [dict(row) for row in cursor.fetchall()]
-    conn.close()
-    return rows
 
-def get_recovery_metrics() -> dict:
+def get_audit_trail_for_case(payment_id: str, merchant_account_id: int | None = None):
     conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT 
-            COALESCE(SUM(amount), 0) as total_at_risk,
-            COALESCE(SUM(recovered_amount), 0) as total_recovered,
-            COUNT(id) as total_cases,
-            COALESCE(SUM(CASE WHEN recovery_status = 'RECOVERED' THEN 1 ELSE 0 END), 0) as recovered_cases,
-            COALESCE(SUM(CASE WHEN recovery_status = 'ESCALATED' THEN 1 ELSE 0 END), 0) as escalated_cases,
-            COALESCE(SUM(CASE WHEN action_taken = 'retry_payment' THEN 1 ELSE 0 END), 0) as retry_actions,
-            COALESCE(SUM(CASE WHEN action_taken = 'send_payment_reminder' THEN 1 ELSE 0 END), 0) as reminder_actions,
-            COALESCE(SUM(CASE WHEN action_taken = 'escalate_manual_review' THEN 1 ELSE 0 END), 0) as manual_escalations,
-            COALESCE(SUM(CASE WHEN recovery_status IN ('DETECTED', 'PENDING_RETRY', 'PENDING_REMINDER', 'LINK_CREATED') THEN 1 ELSE 0 END), 0) as pending_cases
-        FROM recovery_cases
-    """)
-    row = cursor.fetchone()
-    conn.close()
-    # Convert from paisa to rupees
+    try:
+        if merchant_account_id is None:
+            rows = conn.execute("SELECT * FROM audit_trail WHERE payment_id = ? ORDER BY id ASC", (payment_id,)).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM audit_trail WHERE payment_id = ? AND merchant_account_id = ? ORDER BY id ASC", (payment_id, merchant_account_id)).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def get_recovery_metrics(merchant_account_id: int | None = None) -> dict:
+    conn = get_connection()
+    try:
+        if merchant_account_id is None:
+            row = conn.execute(
+                """
+                SELECT COALESCE(SUM(amount),0) total_at_risk,
+                       COALESCE(SUM(recovered_amount),0) total_recovered,
+                       COUNT(id) total_cases,
+                       COALESCE(SUM(CASE WHEN recovery_status='RECOVERED' THEN 1 ELSE 0 END),0) recovered_cases,
+                       COALESCE(SUM(CASE WHEN recovery_status='ESCALATED' THEN 1 ELSE 0 END),0) escalated_cases,
+                       COALESCE(SUM(CASE WHEN action_taken='retry_payment' THEN 1 ELSE 0 END),0) retry_actions,
+                       COALESCE(SUM(CASE WHEN action_taken='send_payment_reminder' THEN 1 ELSE 0 END),0) reminder_actions,
+                       COALESCE(SUM(CASE WHEN action_taken='escalate_manual_review' THEN 1 ELSE 0 END),0) manual_escalations,
+                       COALESCE(SUM(CASE WHEN recovery_status IN ('DETECTED','PENDING_RETRY','PENDING_REMINDER','LINK_CREATED') THEN 1 ELSE 0 END),0) pending_cases
+                FROM recovery_cases
+                """
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT COALESCE(SUM(amount),0) total_at_risk,
+                       COALESCE(SUM(recovered_amount),0) total_recovered,
+                       COUNT(id) total_cases,
+                       COALESCE(SUM(CASE WHEN recovery_status='RECOVERED' THEN 1 ELSE 0 END),0) recovered_cases,
+                       COALESCE(SUM(CASE WHEN recovery_status='ESCALATED' THEN 1 ELSE 0 END),0) escalated_cases,
+                       COALESCE(SUM(CASE WHEN action_taken='retry_payment' THEN 1 ELSE 0 END),0) retry_actions,
+                       COALESCE(SUM(CASE WHEN action_taken='send_payment_reminder' THEN 1 ELSE 0 END),0) reminder_actions,
+                       COALESCE(SUM(CASE WHEN action_taken='escalate_manual_review' THEN 1 ELSE 0 END),0) manual_escalations,
+                       COALESCE(SUM(CASE WHEN recovery_status IN ('DETECTED','PENDING_RETRY','PENDING_REMINDER','LINK_CREATED') THEN 1 ELSE 0 END),0) pending_cases
+                FROM recovery_cases WHERE merchant_account_id = ?
+                """,
+                (merchant_account_id,),
+            ).fetchone()
+    finally:
+        conn.close()
     total_at_risk = float(row["total_at_risk"]) / 100.0
     total_recovered = float(row["total_recovered"]) / 100.0
-    recovery_rate = (total_recovered / total_at_risk * 100.0) if total_at_risk > 0 else 0.0
-    captured_revenue_paisa = get_captured_revenue()
+    captured_revenue_paisa = get_captured_revenue(merchant_account_id=merchant_account_id)
+    successful_count = len(get_successful_payments(merchant_account_id=merchant_account_id))
     return {
         "total_revenue_at_risk": round(total_at_risk, 2),
         "total_revenue_recovered": round(total_recovered, 2),
-        "recovery_rate_percentage": round(recovery_rate, 1),
+        "recovery_rate_percentage": round(total_recovered / total_at_risk * 100.0, 1) if total_at_risk else 0.0,
         "total_cases": int(row["total_cases"]),
         "recovered_cases": int(row["recovered_cases"]),
         "escalated_cases": int(row["escalated_cases"]),
@@ -994,6 +815,6 @@ def get_recovery_metrics() -> dict:
         "manual_escalations": int(row["manual_escalations"]),
         "pending_cases": int(row["pending_cases"]),
         "total_captured_revenue": round(captured_revenue_paisa / 100.0, 2),
-        "captured_payments": len(get_successful_payments()),
+        "captured_payments": successful_count,
         "revenue_still_at_risk": round(max(total_at_risk - total_recovered, 0.0), 2),
     }

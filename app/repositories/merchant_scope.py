@@ -5,6 +5,15 @@ from __future__ import annotations
 from app.repositories.database import get_connection
 
 
+def _to_case(row):
+    if not row:
+        return None
+    case = dict(row)
+    case["amount"] = case["amount"] / 100.0
+    case["recovered_amount"] = case["recovered_amount"] / 100.0
+    return case
+
+
 def find_case_for_recovery_event_scoped(
     merchant_account_id: int,
     order_id: str | None = None,
@@ -51,13 +60,7 @@ def find_case_for_recovery_event_scoped(
             ).fetchall()
             row = rows[0] if len(rows) == 1 else None
 
-        if not row:
-            return None
-
-        case = dict(row)
-        case["amount"] = case["amount"] / 100.0
-        case["recovered_amount"] = case["recovered_amount"] / 100.0
-        return case
+        return _to_case(row)
     finally:
         conn.close()
 
@@ -96,12 +99,41 @@ def find_case_for_captured_payment_scoped(
         else:
             row = None
 
-        if not row:
-            return None
+        return _to_case(row)
+    finally:
+        conn.close()
 
-        case = dict(row)
-        case["amount"] = case["amount"] / 100.0
-        case["recovered_amount"] = case["recovered_amount"] / 100.0
-        return case
+
+def find_payment_event_merchant(payment_id: str) -> int | None:
+    """Resolve event ownership from persisted payment history."""
+    if not payment_id:
+        return None
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            """
+            SELECT merchant_account_id
+            FROM payment_events
+            WHERE payment_id = ? AND merchant_account_id IS NOT NULL
+            ORDER BY id DESC LIMIT 1
+            """,
+            (payment_id,),
+        ).fetchone()
+        return int(row["merchant_account_id"]) if row else None
+    finally:
+        conn.close()
+
+
+def find_webhook_event_merchant(event_id: str) -> int | None:
+    """Return the merchant reserved for a webhook event."""
+    if not event_id:
+        return None
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT merchant_account_id FROM webhook_events WHERE event_id = ? LIMIT 1",
+            (event_id,),
+        ).fetchone()
+        return int(row["merchant_account_id"]) if row and row["merchant_account_id"] is not None else None
     finally:
         conn.close()

@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ShopFlow · Retry Payment</title>
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+  <style>
+    *{box-sizing:border-box}body{margin:0;font-family:Inter,Arial,sans-serif;background:#f4f6f8;color:#17202a}.top{height:64px;background:#121a24;color:#fff;display:flex;align-items:center;padding:0 7%;font-weight:700}.logo{font-size:23px}.logo span{color:#4fd1c5}.secure{margin-left:auto;color:#b8c4d2;font-size:12px}.wrap{max-width:720px;margin:70px auto;padding:0 24px}.card{background:#fff;border:1px solid #e5e9ef;border-radius:18px;box-shadow:0 8px 30px rgba(15,23,42,.07);padding:34px}.eyebrow{font-size:12px;font-weight:800;letter-spacing:.08em;color:#087f8c;text-transform:uppercase}.amount{font-size:38px;font-weight:850;margin:8px 0 6px}.muted{color:#667085;line-height:1.5}.status{margin:22px 0;padding:14px;border-radius:11px;background:#f1f5f9;color:#536174;font-size:14px}.pay{width:100%;padding:15px;border:0;border-radius:11px;background:#0b8f83;color:#fff;font-size:16px;font-weight:800;cursor:pointer}.pay:disabled{opacity:.55;cursor:not-allowed}.audit{margin-top:22px;border-top:1px solid #edf0f4;padding-top:20px;font-size:12px;color:#718096;line-height:1.7}.success{background:#edf9f2;color:#17663c}.error{background:#fff3f2;color:#9b2c2c}
+  </style>
+</head>
+<body>
+  <header class="top"><div class="logo">Shop<span>Flow</span></div><div class="secure">🔒 Razorpay Test Mode · No real money</div></header>
+  <main class="wrap">
+    <div class="card">
+      <div class="eyebrow">Revenue Recovery · Bounded Retry</div>
+      <h1>One payment retry is available</h1>
+      <p class="muted">We detected a temporary payment issue. The recovery policy has approved exactly one retry using your original order. No new order is created.</p>
+      <div class="amount" id="amount">Checking…</div>
+      <div class="muted" id="details">Verifying retry authorization…</div>
+      <div class="status" id="status">The server will confirm the final payment result.</div>
+      <button class="pay" id="pay" disabled>Authorize retry…</button>
+      <div class="audit">Financial decision: deterministic policy<br>Checkout: Razorpay<br>Success authority: server-side payment webhook</div>
+    </div>
+  </main>
+<script>
+  const paymentId = decodeURIComponent(location.pathname.split('/').pop());
+  let pollTimer = null;
+  let attempts = 0;
+  const money = n => `₹${Number(n).toLocaleString('en-IN')}`;
+  const statusEl = document.getElementById('status');
+  const button = document.getElementById('pay');
+
+  async function authorize() {
+    try {
+      const r = await fetch(`/api/cases/${encodeURIComponent(paymentId)}/retry-checkout`, {method:'POST'});
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.detail || 'Retry is not authorized');
+      document.getElementById('amount').innerText = money(data.amount / 100);
+      document.getElementById('details').innerText = `Order ${data.order_id} · Retry ${data.retry_count} of ${data.max_retries}`;
+      button.disabled = false;
+      button.innerText = `Retry payment · ${money(data.amount / 100)}`;
+      button.onclick = () => openCheckout(data);
+    } catch (e) {
+      document.getElementById('amount').innerText = 'Retry unavailable';
+      document.getElementById('details').innerText = e.message;
+      statusEl.className = 'status error';
+      statusEl.innerText = 'The bounded retry authorization was not granted.';
+    }
+  }
+
+  function stopPolling(){ if(pollTimer){clearTimeout(pollTimer);pollTimer=null;} }
+
+  async function pollState() {
+    if (attempts++ >= 14) {
+      statusEl.innerText = 'Payment submitted; webhook confirmation is still pending. Check the operations dashboard.';
+      return;
+    }
+    try {
+      const r = await fetch(`/api/cases/${encodeURIComponent(paymentId)}`);
+      if (r.ok) {
+        const state = await r.json();
+        if (state.recovery_status === 'RECOVERED' || state.payment_lifecycle_status === 'captured') {
+          stopPolling();
+          statusEl.className = 'status success';
+          statusEl.innerText = `Payment captured and ${money(state.recovered_amount || state.amount)} recovered.`;
+          button.disabled = true;
+          button.innerText = 'Payment recovered';
+          return;
+        }
+        if (state.recovery_status === 'ESCALATED') {
+          stopPolling();
+          statusEl.className = 'status error';
+          statusEl.innerText = 'The retry did not recover the payment. The case has been escalated for manual review.';
+          button.disabled = true;
+          button.innerText = 'Escalated';
+          return;
+        }
+      }
+    } catch(e) { console.error(e); }
+    statusEl.innerText = 'Payment submitted; waiting for server confirmation…';
+    pollTimer = setTimeout(pollState, 1500);
+  }
+
+  function openCheckout(data) {
+    button.disabled = true;
+    button.innerText = 'Opening secure checkout…';
+    statusEl.style.display = 'block';
+    statusEl.innerText = 'Complete the retry in Razorpay Checkout.';
+    try {
+      const options = {
+        key: data.key_id,
+        amount: data.amount,
+        currency: data.currency,
+        name: 'ShopFlow Demo',
+        description: 'Bounded payment retry',
+        order_id: data.order_id,
+        handler: function() {
+          attempts = 0;
+          statusEl.innerText = 'Payment submitted; waiting for server confirmation…';
+          pollState();
+        },
+        modal: {
+          ondismiss: function() {
+            button.disabled = false;
+            button.innerText = `Retry payment · ${money(data.amount / 100)}`;
+            statusEl.style.display = 'block';
+            statusEl.innerText = 'Checkout closed. No recovery success was recorded.';
+          }
+        },
+        prefill: {name:'Test Customer', email:'test@example.com', contact:'9999999999'},
+        theme: {color:'#0b8f83'}
+      };
+      new Razorpay(options).open();
+    } catch(e) {
+      button.disabled = false;
+      button.innerText = `Retry payment · ${money(data.amount / 100)}`;
+      statusEl.className = 'status error';
+      statusEl.innerText = 'Could not open secure checkout. Please try again.';
+    }
+  }
+
+  authorize();
+</script>
+</body>
+</html>

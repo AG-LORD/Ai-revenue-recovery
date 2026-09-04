@@ -6,7 +6,7 @@ and the API router. All business logic lives in the ``app`` package.
 import logging
 import random
 import time
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from starlette.responses import FileResponse, JSONResponse
 
 from app.core.config import FRONTEND_DIR, RAZORPAY_KEY_ID
@@ -14,6 +14,7 @@ from app.repositories.database import init_db
 from app.repositories.merchant_migration import init_merchant_data
 from app.services.merchant_service import DEFAULT_MERCHANT_KEY, get_merchant_by_key, register_order
 from app.integrations.razorpay_client import create_razorpay_client
+from app.services.retry_service import RetryAuthorizationError, authorize_retry_checkout
 from app.api.router import router
 
 logging.basicConfig(level=logging.INFO)
@@ -93,6 +94,15 @@ async def create_store_order(request: Request):
         return JSONResponse(status_code=503, content={"status": "error", "message": "Store checkout is currently unavailable"})
 
 
+@app.post("/api/cases/{payment_id}/retry-checkout")
+async def retry_checkout(payment_id: str):
+    """Return the existing Razorpay order for an approved bounded retry."""
+    try:
+        return authorize_retry_checkout(payment_id)
+    except RetryAuthorizationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @app.get("/")
 async def home():
     return FileResponse(FRONTEND_DIR / "dashboard.html")
@@ -106,3 +116,8 @@ async def serve_dashboard():
 @app.get("/checkout")
 async def serve_checkout():
     return FileResponse(FRONTEND_DIR / "checkout.html")
+
+
+@app.get("/retry/{payment_id}")
+async def serve_retry(payment_id: str):
+    return FileResponse(FRONTEND_DIR / "retry.html")

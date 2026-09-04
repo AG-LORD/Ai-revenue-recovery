@@ -514,7 +514,12 @@ def create_or_get_recovery_case(payment: dict, diagnosis: dict, merchant_account
                 max_retries, retry_count, recovery_status, action_taken, action_result,
                 payment_link_id, payment_link_url, ai_explanation, customer_message,
                 recovered_amount, created_at, updated_at, merchant_account_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (
+    ?, ?, ?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?
+)
             """,
             (
                 payment_id, order_id, amount_paisa, currency, payment_method, wallet,

@@ -1,10 +1,4 @@
-"""Merchant registry and tenant-resolution helpers.
-
-The prototype uses logical merchant accounts so the recovery engine can be
-merchant-aware even when the hackathon environment has one Razorpay Test Mode
-credential. In production, ``razorpay_account_id`` maps to the merchant's
-Razorpay account context.
-"""
+"""Merchant registry and tenant-resolution helpers."""
 
 from __future__ import annotations
 
@@ -31,6 +25,8 @@ DEMO_MERCHANTS = (
     },
 )
 
+DEFAULT_MERCHANT_KEY = "urban_cart"
+
 
 def init_merchant_registry() -> None:
     """Create the merchant registry and seed deterministic demo merchants."""
@@ -48,7 +44,6 @@ def init_merchant_registry() -> None:
             )
             """
         )
-
         now = datetime.now(timezone.utc).isoformat()
         for merchant in DEMO_MERCHANTS:
             conn.execute(
@@ -58,6 +53,7 @@ def init_merchant_registry() -> None:
                 ) VALUES (?, ?, ?, 'ACTIVE', ?)
                 ON CONFLICT(merchant_key) DO UPDATE SET
                     business_name = excluded.business_name,
+                    razorpay_account_id = excluded.razorpay_account_id,
                     razorpay_account_id = excluded.razorpay_account_id,
                     status = 'ACTIVE'
                 """,
@@ -74,7 +70,6 @@ def init_merchant_registry() -> None:
 
 
 def get_merchants() -> list[dict]:
-    """Return all active merchants in stable display order."""
     init_merchant_registry()
     conn = get_connection()
     try:
@@ -92,7 +87,6 @@ def get_merchants() -> list[dict]:
 
 
 def get_merchant_by_key(merchant_key: str) -> dict | None:
-    """Resolve a merchant by its application-level key."""
     if not merchant_key:
         return None
     init_merchant_registry()
@@ -113,7 +107,6 @@ def get_merchant_by_key(merchant_key: str) -> dict | None:
 
 
 def get_merchant_by_id(merchant_id: int) -> dict | None:
-    """Resolve a merchant by its internal numeric ID."""
     init_merchant_registry()
     conn = get_connection()
     try:
@@ -129,3 +122,78 @@ def get_merchant_by_id(merchant_id: int) -> dict | None:
         return dict(row) if row else None
     finally:
         conn.close()
+
+
+def register_order(order_id: str, merchant_id: int) -> None:
+    """Bind a Razorpay order to exactly one application merchant."""
+    if not order_id or not merchant_id:
+        raise ValueError("order_id and merchant_id are required")
+    init_merchant_registry()
+    conn = get_connection()
+    try:
+        conn.execute(
+            """
+            INSERT INTO merchant_orders (order_id, merchant_account_id, created_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(order_id) DO UPDATE SET merchant_account_id = excluded.merchant_account_id
+            """,
+            (order_id, merchant_id, datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_merchant_by_order_id(order_id: str) -> dict | None:
+    """Resolve the application merchant that owns a Razorpay order."""
+    if not order_id:
+        return None
+    init_merchant_registry()
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            """
+            SELECT m.id, m.merchant_key, m.business_name, m.razorpay_account_id, m.status, m.created_at
+            FROM merchant_accounts m
+            JOIN merchant_orders o ON o.merchant_account_id = m.id
+            WHERE o.order_id = ? AND m.status = 'ACTIVE'
+            LIMIT 1
+            """,
+            (order_id,),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def resolve_event_merchant(event: dict) -> dict | None:
+    """Resolve webhook merchant from account context or known order mapping.
+
+    Production webhooks should carry Razorpay account context. The order mapping
+    provides a safe fallback for this single-test-account hackathon environment.
+    """
+    account_id = event.get("account_id")
+    if account_id:
+        init_merchant_registry()
+        conn = get_connection()
+        try:
+            row = conn.execute(
+                """
+                SELECT id, merchant_key, business_name, razorpay_account_id, status, created_at
+                FROM merchant_accounts
+                WHERE razorpay_account_id = ? AND status = 'ACTIVE'
+                ORDER BY id ASC
+                """,
+                (account_id,),
+            ).fetchall()
+            if len(row) == 1:
+                return dict(row[0])
+        finally:
+            conn.close()
+
+    payload = event.get("payload", {})
+    payment = payload.get("payment", {}).get("entity", {})
+    order = payload.get("order", {}).get("entity", {})
+    payment_link = payload.get("payment_link", {}).get("entity", {})
+    order_id = payment.get("order_id") or order.get("id") or payment_link.get("order_id")
+    return get_merchant_by_order_id(order_id)

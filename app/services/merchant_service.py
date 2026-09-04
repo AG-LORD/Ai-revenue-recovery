@@ -140,8 +140,40 @@ def get_merchant_by_order_id(order_id: str) -> dict | None:
         conn.close()
 
 
+def get_merchant_by_payment_id(payment_id: str) -> dict | None:
+    """Resolve ownership from a previously registered recovery/payment case."""
+    if not payment_id:
+        return None
+    init_merchant_registry()
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            """
+            SELECT m.id, m.merchant_key, m.business_name, m.razorpay_account_id, m.status, m.created_at
+            FROM merchant_accounts m
+            JOIN recovery_cases c ON c.merchant_account_id = m.id
+            WHERE c.payment_id = ? AND m.status = 'ACTIVE'
+            ORDER BY c.id DESC LIMIT 1
+            """,
+            (payment_id,),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
 def resolve_event_merchant(event: dict) -> dict | None:
-    """Resolve merchant from Razorpay account context or our order registry."""
+    """Resolve a webhook merchant without guessing across tenants.
+
+    Resolution order:
+    1. A unique Razorpay account mapping.
+    2. Our registered order ownership.
+    3. The original failed payment referenced by a recovery Payment Link.
+
+    Shared demo accounts deliberately fall through to order/case ownership.
+    If none of these identifiers resolve, return ``None`` rather than defaulting
+    to a merchant and risking cross-tenant financial processing.
+    """
     account_id = event.get("account_id")
     if account_id:
         init_merchant_registry()
@@ -156,16 +188,23 @@ def resolve_event_merchant(event: dict) -> dict | None:
                 """,
                 (account_id,),
             ).fetchall()
-            # One-to-one account mapping is required. Our demo merchants share
-            # one test credential, so order mapping remains the disambiguator.
             if len(rows) == 1:
                 return dict(rows[0])
         finally:
             conn.close()
 
-    payload = event.get("payload", {})
-    payment = payload.get("payment", {}).get("entity", {})
-    order = payload.get("order", {}).get("entity", {})
-    payment_link = payload.get("payment_link", {}).get("entity", {})
+    payload = event.get("payload", {}) or {}
+    payment = payload.get("payment", {}).get("entity", {}) or {}
+    order = payload.get("order", {}).get("entity", {}) or {}
+    payment_link = payload.get("payment_link", {}).get("entity", {}) or {}
+
     order_id = payment.get("order_id") or order.get("id") or payment_link.get("order_id")
-    return get_merchant_by_order_id(order_id)
+    merchant = get_merchant_by_order_id(order_id)
+    if merchant:
+        return merchant
+
+    notes = payment_link.get("notes", {}) or {}
+    original_payment_id = notes.get("original_payment_id")
+    if not original_payment_id:
+        original_payment_id = payment.get("notes", {}).get("original_payment_id")
+    return get_merchant_by_payment_id(original_payment_id)

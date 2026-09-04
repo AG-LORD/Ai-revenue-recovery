@@ -333,6 +333,14 @@ def reconcile_successful_payment_event(event_type: str, data: dict) -> tuple[Dic
                 payment_id,
                 order_id if not payment_id else None,
             )
+        # A retry produces a new payment_id against the same Razorpay order.
+        # Only use the order when it uniquely identifies one unrecovered case.
+        if not matching_case and payment_id and order_id:
+            matching_case = find_case_for_captured_payment_scoped(
+                merchant["id"],
+                None,
+                order_id,
+            )
     else:
         matching_case = _legacy_recovery_case_by_event(
             event_type,
@@ -341,6 +349,11 @@ def reconcile_successful_payment_event(event_type: str, data: dict) -> tuple[Dic
             None,
             original_payment_id,
         )
+        if not matching_case and payment_id and order_id:
+            matching_case = database.find_case_for_captured_payment(
+                payment_id=None,
+                order_id=order_id,
+            )
 
     if not matching_case:
         logger.warning("Successful event has no safely resolvable case; no financial action taken")
@@ -364,6 +377,18 @@ def reconcile_successful_payment_event(event_type: str, data: dict) -> tuple[Dic
             amount_paise,
         )
         return matching_case, False
+
+    if matching_case.get("action_taken") == "retry_payment":
+        retry_count = int(matching_case.get("retry_count") or 0)
+        max_retries = int(matching_case.get("max_retries") or 0)
+        if (
+            matching_case.get("recovery_status") != "PENDING_RETRY"
+            or retry_count < 1
+            or retry_count > max_retries
+            or (order_id and matching_case.get("order_id") != order_id)
+        ):
+            logger.warning("Successful event rejected for invalid retry state on case %s", matching_case["id"])
+            return matching_case, False
 
     successful_payment_id = payment_id or order_id or "payment_unknown"
     updated_case, transitioned = database.mark_case_recovered_paisa(

@@ -12,7 +12,7 @@ class RetryAuthorizationError(ValueError):
     """Raised when a recovery case is not eligible for another checkout attempt."""
 
 
-def authorize_retry_checkout(payment_id: str) -> dict[str, Any]:
+def authorize_retry_checkout(payment_id: str, merchant_account_id: int | None = None) -> dict[str, Any]:
     """Authorize the already-approved retry using the original Razorpay order.
 
     This function does not create a new order, increment retry_count, or mark
@@ -20,7 +20,10 @@ def authorize_retry_checkout(payment_id: str) -> dict[str, Any]:
     bounded retry before this endpoint can be reached. Razorpay webhooks remain
     authoritative for the final payment outcome.
     """
-    case = database.get_case_by_payment_id(payment_id)
+    if merchant_account_id is None:
+        case = database.get_case_by_payment_id(payment_id)
+    else:
+        case = database.get_case_by_payment_id(payment_id, merchant_account_id=merchant_account_id)
     if not case:
         raise RetryAuthorizationError("Recovery case not found")
 

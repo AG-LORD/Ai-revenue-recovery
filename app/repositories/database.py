@@ -518,7 +518,35 @@ def create_or_get_recovery_case(payment: dict, diagnosis: dict, merchant_account
 
     conn = get_connection()
     try:
-        row = conn.execute("SELECT * FROM recovery_cases WHERE payment_id = ?", (payment_id,)).fetchone()
+        resolved_merchant_id = merchant_account_id
+        if resolved_merchant_id is None and order_id:
+            merchant_row = conn.execute(
+                "SELECT merchant_account_id FROM merchant_orders WHERE order_id = ? LIMIT 1",
+                (order_id,),
+            ).fetchone()
+            resolved_merchant_id = merchant_row["merchant_account_id"] if merchant_row else None
+
+        existing_payment = conn.execute(
+            "SELECT merchant_account_id FROM recovery_cases WHERE payment_id = ? LIMIT 1",
+            (payment_id,),
+        ).fetchone()
+        if (
+            existing_payment
+            and resolved_merchant_id is not None
+            and existing_payment["merchant_account_id"] != resolved_merchant_id
+        ):
+            raise ValueError("Payment ID already belongs to another merchant")
+
+        if resolved_merchant_id is None:
+            row = conn.execute(
+                "SELECT * FROM recovery_cases WHERE payment_id = ? AND merchant_account_id IS NULL",
+                (payment_id,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT * FROM recovery_cases WHERE payment_id = ? AND merchant_account_id = ?",
+                (payment_id, resolved_merchant_id),
+            ).fetchone()
         if row:
             case = dict(row)
             case["amount"] = case["amount"] / 100.0
@@ -546,7 +574,7 @@ def create_or_get_recovery_case(payment: dict, diagnosis: dict, merchant_account
                 error_code, error_source, error_step, error_reason, error_description,
                 diagnosis_category, diagnosis_text, is_recoverable, recommended_action,
                 max_retries, 0, "DETECTED", "", "", "", "", "", "", 0,
-                now, now, merchant_account_id,
+                now, now, resolved_merchant_id,
             ),
         )
         case_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
@@ -561,7 +589,7 @@ def create_or_get_recovery_case(payment: dict, diagnosis: dict, merchant_account
     add_audit_log(
         payment_id=payment_id,
         case_id=case_id,
-        merchant_account_id=merchant_account_id,
+        merchant_account_id=resolved_merchant_id,
         actor="SYSTEM",
         action="PAYMENT_FAILURE_DETECTED",
         details=f"Payment failure received for Rs. {new_case['amount']} (Method: {payment_method}, Reason: {error_reason})",
@@ -624,7 +652,7 @@ def get_case_by_payment_id(payment_id: str, merchant_account_id: int | None = No
     return case
 
 
-def update_case_policy(case_id: int, payment_id: str, policy_result: dict) -> dict:
+def update_case_policy(case_id: int, payment_id: str, policy_result: dict, merchant_account_id: int | None = None) -> dict:
     now = datetime.now(timezone.utc).isoformat()
     next_status = policy_result.get("next_status", "ESCALATED")
     action_allowed = policy_result.get("action_allowed", "escalate_manual_review")
@@ -633,7 +661,15 @@ def update_case_policy(case_id: int, payment_id: str, policy_result: dict) -> di
     guardrail = policy_result.get("guardrail_triggered")
     conn = get_connection()
     try:
-        conn.execute("UPDATE recovery_cases SET recovery_status = ?, action_taken = ?, updated_at = ? WHERE id = ?", (next_status, action_allowed, now, case_id))
+        cursor = conn.execute(
+            """
+            UPDATE recovery_cases
+            SET recovery_status = ?, action_taken = ?, updated_at = ?
+            WHERE id = ? AND payment_id = ? AND recovery_status != 'RECOVERED'
+              AND (? IS NULL OR merchant_account_id = ?)
+            """,
+            (next_status, action_allowed, now, case_id, payment_id, merchant_account_id, merchant_account_id),
+        )
         conn.commit()
         updated_case = dict(conn.execute("SELECT * FROM recovery_cases WHERE id = ?", (case_id,)).fetchone())
     finally:
@@ -641,26 +677,36 @@ def update_case_policy(case_id: int, payment_id: str, policy_result: dict) -> di
     updated_case["amount"] = updated_case["amount"] / 100.0
     updated_case["recovered_amount"] = updated_case["recovered_amount"] / 100.0
     guardrail_note = f" [Guardrail: {guardrail}]" if guardrail else ""
-    add_audit_log(payment_id, "POLICY_GATE", f"POLICY_{decision}", f"Allowed Action: '{action_allowed}' -> Status: '{next_status}'. Rationale: {reason}{guardrail_note}", case_id=case_id)
+    if cursor.rowcount == 1:
+        add_audit_log(payment_id, "POLICY_GATE", f"POLICY_{decision}", f"Allowed Action: '{action_allowed}' -> Status: '{next_status}'. Rationale: {reason}{guardrail_note}", case_id=case_id)
     return updated_case
 
 
-def increment_retry_count(case_id: int, payment_id: str) -> dict:
+def increment_retry_count(case_id: int, payment_id: str, merchant_account_id: int | None = None) -> dict:
     now = datetime.now(timezone.utc).isoformat()
     conn = get_connection()
     try:
-        conn.execute("UPDATE recovery_cases SET retry_count = retry_count + 1, updated_at = ? WHERE id = ?", (now, case_id))
+        cursor = conn.execute(
+            """
+            UPDATE recovery_cases
+            SET retry_count = retry_count + 1, updated_at = ?
+            WHERE id = ? AND payment_id = ? AND recovery_status != 'RECOVERED'
+              AND (? IS NULL OR merchant_account_id = ?)
+            """,
+            (now, case_id, payment_id, merchant_account_id, merchant_account_id),
+        )
         conn.commit()
         updated_case = dict(conn.execute("SELECT * FROM recovery_cases WHERE id = ?", (case_id,)).fetchone())
     finally:
         conn.close()
     updated_case["amount"] = updated_case["amount"] / 100.0
     updated_case["recovered_amount"] = updated_case["recovered_amount"] / 100.0
-    add_audit_log(payment_id, "RECOVERY_ENGINE", "RETRY_ATTEMPT_RECORDED", f"Retry attempt #{updated_case['retry_count']} executed of max {updated_case['max_retries']}.", case_id=case_id)
+    if cursor.rowcount == 1:
+        add_audit_log(payment_id, "RECOVERY_ENGINE", "RETRY_ATTEMPT_RECORDED", f"Retry attempt #{updated_case['retry_count']} executed of max {updated_case['max_retries']}.", case_id=case_id)
     return updated_case
 
 
-def update_case_recovery_action(case_id: int, payment_id: str, recovery_status: str, action_result: str, payment_link_id: str = None, payment_link_url: str = None) -> dict:
+def update_case_recovery_action(case_id: int, payment_id: str, recovery_status: str, action_result: str, payment_link_id: str = None, payment_link_url: str = None, merchant_account_id: int | None = None) -> dict:
     now = datetime.now(timezone.utc).isoformat()
     conn = get_connection()
     try:
@@ -671,9 +717,10 @@ def update_case_recovery_action(case_id: int, payment_id: str, recovery_status: 
                 payment_link_id = COALESCE(?, payment_link_id),
                 payment_link_url = COALESCE(?, payment_link_url),
                 updated_at = ?
-            WHERE id = ?
+            WHERE id = ? AND payment_id = ? AND recovery_status != 'RECOVERED'
+              AND (? IS NULL OR merchant_account_id = ?)
             """,
-            (recovery_status, action_result, payment_link_id, payment_link_url, now, case_id),
+            (recovery_status, action_result, payment_link_id, payment_link_url, now, case_id, payment_id, merchant_account_id, merchant_account_id),
         )
         conn.commit()
         updated_case = dict(conn.execute("SELECT * FROM recovery_cases WHERE id = ?", (case_id,)).fetchone())
@@ -733,6 +780,7 @@ def mark_case_recovered_paisa(
     event_type: str,
     recovery_source: str | None = None,
     event_id: str | None = None,
+    merchant_account_id: int | None = None,
 ) -> tuple[dict, bool]:
     now = datetime.now(timezone.utc).isoformat()
     conn = get_connection()
@@ -744,6 +792,10 @@ def mark_case_recovered_paisa(
                 recovery_source = ?, recovered_payment_id = ?, recovered_event_id = ?,
                 recovery_confirmed_at = ?, updated_at = ?
             WHERE id = ? AND recovery_status != 'RECOVERED'
+              AND payment_id = ?
+              AND ? >= 0
+              AND ? <= amount
+              AND (? IS NULL OR merchant_account_id = ?)
             """,
             (
                 recovered_amount_paisa,
@@ -754,6 +806,11 @@ def mark_case_recovered_paisa(
                 now,
                 now,
                 case_id,
+                payment_id,
+                recovered_amount_paisa,
+                recovered_amount_paisa,
+                merchant_account_id,
+                merchant_account_id,
             ),
         )
         changed = cursor.rowcount == 1
@@ -783,7 +840,14 @@ def update_case_ai_insights(case_id: int, payment_id: str, ai_explanation: str, 
     now = datetime.now(timezone.utc).isoformat()
     conn = get_connection()
     try:
-        conn.execute("UPDATE recovery_cases SET ai_explanation = ?, customer_message = ?, updated_at = ? WHERE id = ?", (ai_explanation, customer_message, now, case_id))
+        conn.execute(
+            """
+            UPDATE recovery_cases
+            SET ai_explanation = ?, customer_message = ?, updated_at = ?
+            WHERE id = ? AND payment_id = ? AND recovery_status != 'RECOVERED'
+            """,
+            (ai_explanation, customer_message, now, case_id, payment_id),
+        )
         conn.commit()
         updated_case = dict(conn.execute("SELECT * FROM recovery_cases WHERE id = ?", (case_id,)).fetchone())
     finally:

@@ -98,7 +98,10 @@ async def create_store_order(request: Request):
 async def retry_checkout(payment_id: str):
     """Return the existing Razorpay order for an approved bounded retry."""
     try:
-        return authorize_retry_checkout(payment_id)
+        merchant = get_merchant_by_key(DEFAULT_MERCHANT_KEY)
+        if not merchant:
+            raise RetryAuthorizationError("Default merchant is unavailable")
+        return authorize_retry_checkout(payment_id, merchant_account_id=merchant["id"])
     except RetryAuthorizationError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 

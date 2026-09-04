@@ -67,6 +67,11 @@ def test_payment_link_paid_webhook_is_processed_once(monkeypatch) -> None:
     }
     case, created = database.create_or_get_recovery_case(payment, diagnosis)
     assert created is True
+    database.update_case_policy(case["id"], payment["id"], {
+        "decision": "ALLOW_REMINDER",
+        "action_allowed": "send_payment_reminder",
+        "next_status": "PENDING_REMINDER",
+    })
     database.update_case_recovery_action(
         case_id=case["id"],
         payment_id=payment["id"],
@@ -79,8 +84,8 @@ def test_payment_link_paid_webhook_is_processed_once(monkeypatch) -> None:
         "id": "evt_link_paid_once",
         "event": "payment_link.paid",
         "payload": {
-            "payment_link": {"entity": {"id": "plink_paid_once", "amount_paid": 5000}},
-            "payment": {"entity": {"id": "pay_recovered_once", "order_id": "order_link_paid", "amount": 5000}},
+            "payment_link": {"entity": {"id": "plink_paid_once", "amount_paid": 5000, "currency": "INR", "order_id": "order_link_paid"}},
+            "payment": {"entity": {"id": "pay_recovered_once", "order_id": "order_link_paid", "amount": 5000, "currency": "INR"}},
         },
     }
 
@@ -117,6 +122,11 @@ def test_payment_link_paid_with_a_new_event_id_does_not_recover_twice(monkeypatc
     }
     case, created = database.create_or_get_recovery_case(payment, diagnosis)
     assert created is True
+    database.update_case_policy(case["id"], payment["id"], {
+        "decision": "ALLOW_REMINDER",
+        "action_allowed": "send_payment_reminder",
+        "next_status": "PENDING_REMINDER",
+    })
     database.update_case_recovery_action(
         case_id=case["id"],
         payment_id=payment["id"],
@@ -129,8 +139,8 @@ def test_payment_link_paid_with_a_new_event_id_does_not_recover_twice(monkeypatc
         "id": "evt_link_paid_second_guard_one",
         "event": "payment_link.paid",
         "payload": {
-            "payment_link": {"entity": {"id": "plink_second_guard", "amount_paid": 5000}},
-            "payment": {"entity": {"id": "pay_recovered_second_guard", "order_id": "order_second_guard", "amount": 5000}},
+            "payment_link": {"entity": {"id": "plink_second_guard", "amount_paid": 5000, "currency": "INR", "order_id": "order_second_guard"}},
+            "payment": {"entity": {"id": "pay_recovered_second_guard", "order_id": "order_second_guard", "amount": 5000, "currency": "INR"}},
         },
     }
 

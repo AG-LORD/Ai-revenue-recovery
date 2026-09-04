@@ -1,5 +1,6 @@
 import json
 
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -332,3 +333,183 @@ def test_capture_without_safe_case_records_lifecycle_only() -> None:
     assert database.get_case_by_payment_id("pay_orphan") is None
     assert database.get_captured_revenue() == 12345
     assert json.loads(database.get_payment_events(payment_id="pay_orphan")[0]["payload"])["event"] == "payment.captured"
+
+
+def _link_case(database, payment_id: str, order_id: str, status: str = "LINK_CREATED") -> dict:
+    case, created = database.create_or_get_recovery_case(
+        {"id": payment_id, "order_id": order_id, "amount": 50000, "currency": "INR"},
+        {
+            "category": "customer_cancelled",
+            "diagnosis": "Customer cancelled checkout.",
+            "recoverable": True,
+            "recommended_action": "send_payment_reminder",
+            "max_retries": 0,
+        },
+    )
+    assert created is True
+    database.update_case_policy(case["id"], payment_id, {
+        "decision": "ALLOW_REMINDER",
+        "action_allowed": "send_payment_reminder",
+        "next_status": "PENDING_REMINDER",
+    })
+    database.update_case_recovery_action(
+        case["id"], payment_id, status, "PAYMENT_LINK_CREATED",
+        payment_link_id="plink_exact",
+        payment_link_url="https://rzp.io/i/exact",
+    )
+    return database.get_case_by_payment_id(payment_id)
+
+
+def _link_paid(event_id: str, payment_link_id: str = "plink_exact", amount: int = 50000, currency: str = "INR") -> dict:
+    return {
+        "id": event_id,
+        "event": "payment_link.paid",
+        "payload": {
+            "payment_link": {
+                "entity": {
+                    "id": payment_link_id,
+                    "amount_paid": amount,
+                    "currency": currency,
+                    "order_id": "order_link_exact",
+                    "notes": {"original_payment_id": "pay_link_exact"},
+                }
+            },
+            "payment": {
+                "entity": {
+                    "id": "pay_link_success",
+                    "order_id": "order_link_exact",
+                    "amount": amount,
+                    "currency": currency,
+                    "status": "captured",
+                    "notes": {"original_payment_id": "pay_link_exact"},
+                }
+            },
+        },
+    }
+
+
+def test_payment_link_exact_match_recovers_with_amount_and_currency() -> None:
+    from main import app
+    from app.repositories import database
+
+    app.state.razorpay_client = VerifiedGateway()
+    client = TestClient(app)
+    _register_order("order_link_exact")
+    _link_case(database, "pay_link_exact", "order_link_exact")
+
+    response = _webhook(client, _link_paid("evt_link_exact"))
+
+    assert response.json()["recovered"] is True
+    case = database.get_case_by_payment_id("pay_link_exact")
+    assert case["recovery_status"] == "RECOVERED"
+    assert case["recovery_source"] == "PAYMENT_LINK"
+
+
+@pytest.mark.parametrize(
+    ("event_id", "payment_link_id", "amount", "currency", "status"),
+    [
+        ("evt_link_wrong_currency", "plink_exact", 50000, "USD", "LINK_CREATED"),
+        ("evt_link_wrong_amount", "plink_exact", 49999, "INR", "LINK_CREATED"),
+        ("evt_link_escalated", "plink_exact", 50000, "INR", "ESCALATED"),
+        ("evt_link_pending_retry", "plink_exact", 50000, "INR", "PENDING_RETRY"),
+        ("evt_link_wrong_id", "plink_other", 50000, "INR", "LINK_CREATED"),
+    ],
+)
+def test_payment_link_success_requires_exact_authorized_case(
+    event_id: str,
+    payment_link_id: str,
+    amount: int,
+    currency: str,
+    status: str,
+) -> None:
+    from main import app
+    from app.repositories import database
+
+    app.state.razorpay_client = VerifiedGateway()
+    client = TestClient(app)
+    _register_order("order_link_exact")
+    _link_case(database, "pay_link_exact", "order_link_exact", status=status)
+
+    response = _webhook(
+        client,
+        _link_paid(event_id, payment_link_id=payment_link_id, amount=amount, currency=currency),
+    )
+
+    assert response.json()["recovered"] is False
+    assert database.get_case_by_payment_id("pay_link_exact")["recovery_status"] == status
+
+
+def test_payment_link_duplicate_event_ids_and_new_event_ids_recover_once() -> None:
+    from main import app
+    from app.repositories import database
+
+    app.state.razorpay_client = VerifiedGateway()
+    client = TestClient(app)
+    _register_order("order_link_exact")
+    _link_case(database, "pay_link_exact", "order_link_exact")
+
+    first = _webhook(client, _link_paid("evt_link_duplicate"))
+    duplicate = _webhook(client, _link_paid("evt_link_duplicate"))
+    second_event = _webhook(client, _link_paid("evt_link_duplicate_2"))
+
+    assert first.json()["recovered"] is True
+    assert duplicate.json()["status"] == "ignored"
+    assert second_event.json()["recovered"] is False
+    conn = database.get_connection()
+    count = conn.execute(
+        "SELECT COUNT(*) AS count FROM audit_trail WHERE payment_id = ? AND action = 'REVENUE_RECOVERED'",
+        ("pay_link_exact",),
+    ).fetchone()["count"]
+    conn.close()
+    assert count == 1
+
+
+def test_recovered_case_is_terminal_for_duplicate_failure_and_capture() -> None:
+    from main import app
+    from app.repositories import database
+
+    app.state.razorpay_client = VerifiedGateway()
+    client = TestClient(app)
+    _register_order("order_terminal")
+    _webhook(client, _failure("evt_terminal_fail", "pay_terminal", "order_terminal"))
+    capture = _capture("evt_terminal_capture", "pay_terminal", "order_terminal")
+    assert _webhook(client, capture).json()["recovered"] is True
+
+    duplicate_failure = _failure("evt_terminal_failure_again", "pay_terminal", "order_terminal")
+    assert _webhook(client, duplicate_failure).status_code == 200
+    assert _webhook(client, _capture("evt_terminal_capture_again", "pay_terminal", "order_terminal")).json()["recovered"] is False
+
+    case = database.get_case_by_payment_id("pay_terminal")
+    assert case["recovery_status"] == "RECOVERED"
+    assert case["recovered_payment_id"] == "pay_terminal"
+    assert case["recovery_source"] == "CUSTOMER_RETRY"
+    assert case["recovered_event_id"] == "evt_terminal_capture"
+
+
+def test_duplicate_original_failure_does_not_consume_pending_retry() -> None:
+    from main import app
+    from app.repositories import database
+
+    app.state.razorpay_client = VerifiedGateway()
+    client = TestClient(app)
+    _register_order("order_duplicate_original")
+    failure = _failure("evt_duplicate_original_one", "pay_duplicate_original", "order_duplicate_original")
+    failure["payload"]["payment"]["entity"].update({
+        "error_source": "issuer",
+        "error_step": "payment_authorization",
+        "error_description": "Temporary bank issue.",
+    })
+    assert _webhook(client, failure).status_code == 200
+    assert database.get_case_by_payment_id("pay_duplicate_original")["recovery_status"] == "PENDING_RETRY"
+
+    duplicate = _failure("evt_duplicate_original_two", "pay_duplicate_original", "order_duplicate_original")
+    duplicate["payload"]["payment"]["entity"].update({
+        "error_source": "issuer",
+        "error_step": "payment_authorization",
+        "error_description": "Temporary bank issue.",
+    })
+    assert _webhook(client, duplicate).status_code == 200
+
+    case = database.get_case_by_payment_id("pay_duplicate_original")
+    assert case["recovery_status"] == "PENDING_RETRY"
+    assert case["retry_count"] == 1

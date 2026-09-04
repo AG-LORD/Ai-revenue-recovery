@@ -17,6 +17,7 @@ from app.services.recovery_service import (
     reconcile_successful_payment_event,
 )
 from app.services.workflow_service import process_failed_payment
+from app.services.merchant_service import DEFAULT_MERCHANT_KEY, get_merchant_by_key
 from scripts import run_batch_demo
 
 # Repository functions (database layer)
@@ -37,6 +38,13 @@ from app.repositories.database import (
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _default_merchant_id() -> int:
+    merchant = get_merchant_by_key(DEFAULT_MERCHANT_KEY)
+    if not merchant:
+        raise HTTPException(status_code=503, detail="Default merchant is unavailable")
+    return merchant["id"]
 
 
 def _payment_event_details(data: dict) -> dict:
@@ -83,7 +91,7 @@ async def health():
 
 @router.get("/api/metrics")
 async def api_metrics():
-    return get_recovery_metrics()
+    return get_recovery_metrics(merchant_account_id=_default_merchant_id())
 
 @router.post("/api/demo/run-batch")
 async def run_batch_demo_api():
@@ -108,15 +116,23 @@ async def run_batch_demo_api():
 
 @router.get("/api/cases")
 async def list_api_cases():
-    cases = get_all_recovery_cases()
+    cases = get_all_recovery_cases(merchant_account_id=_default_merchant_id())
     return {"total_cases": len(cases), "cases": cases}
 
 
 @router.get("/api/cases/{payment_id}")
 async def get_api_case(payment_id: str):
     """Return non-sensitive authoritative lifecycle and recovery state."""
-    case = get_case_by_payment_id(payment_id)
-    lifecycle = get_payment_lifecycle(payment_id)
+    merchant_account_id = _default_merchant_id()
+    case = get_case_by_payment_id(payment_id, merchant_account_id=merchant_account_id)
+    lifecycle = get_payment_lifecycle(payment_id, merchant_account_id=merchant_account_id)
+    if not case and not lifecycle["events"]:
+        legacy_lifecycle = get_payment_lifecycle(payment_id)
+        if legacy_lifecycle["events"] and all(
+            event["merchant_account_id"] in (None, merchant_account_id)
+            for event in legacy_lifecycle["events"]
+        ):
+            lifecycle = legacy_lifecycle
     if not case and not lifecycle["events"]:
         raise HTTPException(status_code=404, detail="Payment state not found")
     policy_decisions = {
@@ -151,7 +167,7 @@ async def list_cases():
 
 @router.get("/cases/{payment_id}/audit")
 async def case_audit_trail(payment_id: str):
-    trail = get_audit_trail_for_case(payment_id)
+    trail = get_audit_trail_for_case(payment_id, merchant_account_id=_default_merchant_id())
     return {"payment_id": payment_id, "audit_trail": trail}
 
 @router.post("/api/create-order")
@@ -236,11 +252,15 @@ async def simulate_scenario(request: Request):
             },
         }
     elif scenario == "link_paid":
-        all_cases = get_all_recovery_cases()
+        all_cases = get_all_recovery_cases(merchant_account_id=_default_merchant_id())
         link_case = next((c for c in all_cases if c["recovery_status"] == "LINK_CREATED"), None)
-        plink_id = link_case["payment_link_id"] if link_case else f"plink_sim_{ts}"
-        orig_pay_id = link_case["payment_id"] if link_case else f"pay_cancel_{ts}"
-        ord_id = link_case["order_id"] if link_case else f"order_sim_{ts}"
+        if not link_case:
+            raise HTTPException(status_code=409, detail="No LINK_CREATED recovery case is available")
+        plink_id = link_case["payment_link_id"]
+        orig_pay_id = link_case["payment_id"]
+        ord_id = link_case["order_id"]
+        amount_paise = int(round(link_case["amount"] * 100))
+        currency = link_case["currency"]
         payload = {
             "entity": "event",
             "event": "payment_link.paid",
@@ -249,9 +269,11 @@ async def simulate_scenario(request: Request):
                 "payment_link": {
                     "entity": {
                         "id": plink_id,
-                        "amount": 50000,
-                        "amount_paid": 50000,
+                        "amount": amount_paise,
+                        "amount_paid": amount_paise,
                         "status": "paid",
+                        "currency": currency,
+                        "order_id": ord_id,
                         "notes": {"original_payment_id": orig_pay_id},
                     }
                 },
@@ -259,7 +281,8 @@ async def simulate_scenario(request: Request):
                     "entity": {
                         "id": f"pay_recovered_{ts}",
                         "order_id": ord_id,
-                        "amount": 50000,
+                        "amount": amount_paise,
+                        "currency": currency,
                         "currency": "INR",
                         "status": "captured",
                         "notes": {"original_payment_id": orig_pay_id},

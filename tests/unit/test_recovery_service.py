@@ -26,3 +26,28 @@ def test_payment_link_gateway_failure_escalates_without_simulated_link() -> None
     assert outcome["case"]["recovery_status"] == "ESCALATED"
     assert outcome["case"]["payment_link_url"] == ""
     assert outcome["case"]["action_result"] == "PAYMENT_LINK_CREATION_FAILED: RuntimeError"
+
+
+def test_recovery_action_cannot_run_again_after_recovery():
+    payment = {"id": "pay_already_recovered", "amount": 5000, "currency": "INR", "method": "card"}
+    diagnosis = {
+        "category": "customer_cancelled",
+        "diagnosis": "Customer cancelled checkout.",
+        "recoverable": True,
+        "recommended_action": "send_payment_reminder",
+        "max_retries": 0,
+    }
+    case, created = database.create_or_get_recovery_case(payment, diagnosis)
+    assert created is True
+    database.mark_case_recovered_paisa(
+        case["id"], payment["id"], 5000, "pay_success", "payment.captured",
+        recovery_source="CUSTOMER_RETRY", event_id="evt_success",
+    )
+
+    outcome = execute_recovery_action(
+        database.get_case_by_payment_id(payment["id"]),
+        FailingGateway(),
+    )
+
+    assert outcome["status"] == "already_recovered"
+    assert outcome["case"]["recovery_status"] == "RECOVERED"

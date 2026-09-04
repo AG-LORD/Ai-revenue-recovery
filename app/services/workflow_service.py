@@ -147,6 +147,7 @@ def _handle_failed_retry(
     if (
         case.get("action_taken") != "retry_payment"
         or case.get("recovery_status") != "PENDING_RETRY"
+        or payment.get("id") == case.get("payment_id")
     ):
         return None
 
@@ -214,6 +215,29 @@ def process_failed_payment(
     # Only the Bank Glitch demo can trigger this.
     _materialize_demo_order(payment, gateway)
 
+    merchant = resolve_event_merchant(
+        {"payload": {"payment": {"entity": payment}}}
+    )
+    if merchant:
+        existing_case = database.get_case_by_payment_id(
+            payment.get("id"),
+            merchant_account_id=merchant["id"],
+        )
+    else:
+        existing_case = database.get_case_by_payment_id(payment.get("id"))
+    if existing_case and existing_case.get("recovery_status") == "PENDING_RETRY":
+        return {
+            "case": existing_case,
+            "policy": {},
+            "recovery": {"status": "lifecycle_only", "case": existing_case},
+        }
+    if existing_case and existing_case.get("recovery_status") == "RECOVERED":
+        return {
+            "case": existing_case,
+            "policy": {},
+            "recovery": {"status": "already_recovered", "case": existing_case},
+        }
+
     # A failed retry must be handled before creating a new recovery case.
     retry_failure = _handle_failed_retry(payment)
 
@@ -232,6 +256,13 @@ def process_failed_payment(
         payment,
         diagnosis,
     )
+
+    if case.get("recovery_status") == "RECOVERED":
+        return {
+            "case": case,
+            "policy": {},
+            "recovery": {"status": "already_recovered", "case": case},
+        }
 
     # 3. Apply deterministic recovery policy.
     policy = apply_policy(case)

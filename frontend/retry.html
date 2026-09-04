@@ -60,12 +60,20 @@
       const r = await fetch(`/api/cases/${encodeURIComponent(paymentId)}`);
       if (r.ok) {
         const state = await r.json();
-        if (state.recovery_status === 'RECOVERED' || state.payment_lifecycle_status === 'captured') {
+        if (state.recovery_status === 'RECOVERED') {
           stopPolling();
           statusEl.className = 'status success';
-          statusEl.innerText = `Payment captured and ${money(state.recovered_amount || state.amount)} recovered.`;
+          statusEl.innerText = `Payment captured and ${money(state.recovered_amount)} recovered.`;
           button.disabled = true;
           button.innerText = 'Payment recovered';
+          return;
+        }
+        if (state.payment_lifecycle_status === 'captured') {
+          stopPolling();
+          statusEl.className = 'status error';
+          statusEl.innerText = 'Payment captured, but recovery could not be confirmed.';
+          button.disabled = true;
+          button.innerText = 'Recovery not confirmed';
           return;
         }
         if (state.recovery_status === 'ESCALATED') {

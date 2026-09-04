@@ -63,6 +63,9 @@ def execute_recovery_action(case: Dict[str, Any], razorpay_client: PaymentGatewa
     max_retries = int(case.get("max_retries", 0) or 0)
     retry_count = int(case.get("retry_count", 0) or 0)
 
+    if case.get("recovery_status") == "RECOVERED":
+        return {"action": action, "status": "already_recovered", "case": case}
+
     if action == "retry_payment":
         if retry_count >= max_retries:
             updated_case = database.update_case_recovery_action(
@@ -143,7 +146,37 @@ def process_recovery_success_event(event_type: str, data: dict) -> tuple[Dict | 
         return None, False
     if matching_case.get("recovery_status") == "RECOVERED":
         return matching_case, False
-    amount_paise = int(payment.get("amount") or payment_link.get("amount_paid") or payment_link.get("amount") or 0)
+    if (
+        matching_case.get("recovery_status") != "LINK_CREATED"
+        or matching_case.get("action_taken") != "send_payment_reminder"
+    ):
+        logger.warning("Payment Link success rejected for case %s in state %s", matching_case["id"], matching_case.get("recovery_status"))
+        return matching_case, False
+
+    event_payment_link_id = payment_link.get("id")
+    if not event_payment_link_id or event_payment_link_id != matching_case.get("payment_link_id"):
+        logger.warning("Payment Link identity mismatch for case %s", matching_case["id"])
+        return matching_case, False
+
+    event_order_id = payment.get("order_id") or payment_link.get("order_id")
+    if event_order_id and event_order_id != matching_case.get("order_id"):
+        logger.warning("Payment Link order mismatch for case %s", matching_case["id"])
+        return matching_case, False
+    if original_payment_id and original_payment_id != matching_case.get("payment_id"):
+        logger.warning("Payment Link original payment mismatch for case %s", matching_case["id"])
+        return matching_case, False
+
+    payment_amount = payment.get("amount")
+    link_amount = payment_link.get("amount_paid") or payment_link.get("amount")
+    if payment_amount is not None and link_amount is not None and int(payment_amount) != int(link_amount):
+        logger.warning("Payment Link payment/link amount mismatch for case %s", matching_case["id"])
+        return matching_case, False
+    amount_paise = int(payment_amount if payment_amount is not None else link_amount or 0)
+    event_currency = payment.get("currency") or payment_link.get("currency")
+    expected_currency = matching_case.get("currency")
+    if not event_currency or event_currency != expected_currency:
+        logger.warning("Payment Link currency mismatch for case %s", matching_case["id"])
+        return matching_case, False
     expected_amount_paise = _get_stored_amount_paise(matching_case["id"], matching_case["payment_id"])
     if expected_amount_paise is None or amount_paise != expected_amount_paise:
         logger.warning("Recovery amount mismatch for case %s: expected %s paise, received %s paise", matching_case["id"], expected_amount_paise, amount_paise)

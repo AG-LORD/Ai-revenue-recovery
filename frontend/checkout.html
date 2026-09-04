@@ -49,6 +49,7 @@
     .methods { display:flex; gap:9px; flex-wrap:wrap; }
     .method { border:1px solid #e1e6ed; border-radius:10px; padding:9px 12px; font-size:12px; color:#4d5968; background:#fbfcfd; }
     .status { margin-top: 13px; padding: 12px 14px; border-radius: 10px; background:#f1f5f9; color:#536174; font-size:13px; display:none; }
+    .status a { color:#087f8c; font-weight:800; }
     .demo { background: linear-gradient(135deg,#102331,#183b4b); color:white; border:0; }
     .demo .title { color:white; }
     .demo p { color:#bfd0da; font-size:13px; line-height:1.5; margin:0; }
@@ -174,7 +175,13 @@
           stopPolling(); btn.disabled=false; btn.innerText=`Pay ${money(currentOrder.total)}`; return;
         }
         if (state.payment_lifecycle_status === 'failed') {
-          statusMsg.innerText = 'Server confirmed that the payment failed. Recovery workflow can now act.';
+          if (state.recovery_status === 'PENDING_RETRY' && state.allowed_action === 'retry_payment') {
+            statusMsg.innerHTML = `Server confirmed the payment failed. <a href="/retry/${encodeURIComponent(paymentId)}">Continue with the approved retry →</a>`;
+          } else if (state.recovery_status === 'ESCALATED') {
+            statusMsg.innerText = 'The payment failed and the case was escalated for manual review.';
+          } else {
+            statusMsg.innerText = 'Server confirmed that the payment failed. Recovery workflow can now act.';
+          }
           stopPolling(); btn.disabled=false; btn.innerText=`Pay ${money(currentOrder.total)}`; return;
         }
       }

@@ -8,21 +8,9 @@ from app.repositories.database import get_connection
 
 
 DEMO_MERCHANTS = (
-    {
-        "merchant_key": "urban_cart",
-        "business_name": "UrbanCart",
-        "razorpay_account_id": "demo_account",
-    },
-    {
-        "merchant_key": "fit_gear",
-        "business_name": "FitGear",
-        "razorpay_account_id": "demo_account",
-    },
-    {
-        "merchant_key": "learn_pro",
-        "business_name": "LearnPro",
-        "razorpay_account_id": "demo_account",
-    },
+    {"merchant_key": "urban_cart", "business_name": "UrbanCart", "razorpay_account_id": "demo_account"},
+    {"merchant_key": "fit_gear", "business_name": "FitGear", "razorpay_account_id": "demo_account"},
+    {"merchant_key": "learn_pro", "business_name": "LearnPro", "razorpay_account_id": "demo_account"},
 )
 
 DEFAULT_MERCHANT_KEY = "urban_cart"
@@ -54,15 +42,9 @@ def init_merchant_registry() -> None:
                 ON CONFLICT(merchant_key) DO UPDATE SET
                     business_name = excluded.business_name,
                     razorpay_account_id = excluded.razorpay_account_id,
-                    razorpay_account_id = excluded.razorpay_account_id,
                     status = 'ACTIVE'
                 """,
-                (
-                    merchant["merchant_key"],
-                    merchant["business_name"],
-                    merchant["razorpay_account_id"],
-                    now,
-                ),
+                (merchant["merchant_key"], merchant["business_name"], merchant["razorpay_account_id"], now),
             )
         conn.commit()
     finally:
@@ -76,9 +58,7 @@ def get_merchants() -> list[dict]:
         rows = conn.execute(
             """
             SELECT id, merchant_key, business_name, razorpay_account_id, status, created_at
-            FROM merchant_accounts
-            WHERE status = 'ACTIVE'
-            ORDER BY id ASC
+            FROM merchant_accounts WHERE status = 'ACTIVE' ORDER BY id ASC
             """
         ).fetchall()
         return [dict(row) for row in rows]
@@ -95,9 +75,7 @@ def get_merchant_by_key(merchant_key: str) -> dict | None:
         row = conn.execute(
             """
             SELECT id, merchant_key, business_name, razorpay_account_id, status, created_at
-            FROM merchant_accounts
-            WHERE merchant_key = ? AND status = 'ACTIVE'
-            LIMIT 1
+            FROM merchant_accounts WHERE merchant_key = ? AND status = 'ACTIVE' LIMIT 1
             """,
             (merchant_key,),
         ).fetchone()
@@ -113,9 +91,7 @@ def get_merchant_by_id(merchant_id: int) -> dict | None:
         row = conn.execute(
             """
             SELECT id, merchant_key, business_name, razorpay_account_id, status, created_at
-            FROM merchant_accounts
-            WHERE id = ? AND status = 'ACTIVE'
-            LIMIT 1
+            FROM merchant_accounts WHERE id = ? AND status = 'ACTIVE' LIMIT 1
             """,
             (merchant_id,),
         ).fetchone()
@@ -145,7 +121,6 @@ def register_order(order_id: str, merchant_id: int) -> None:
 
 
 def get_merchant_by_order_id(order_id: str) -> dict | None:
-    """Resolve the application merchant that owns a Razorpay order."""
     if not order_id:
         return None
     init_merchant_registry()
@@ -156,8 +131,7 @@ def get_merchant_by_order_id(order_id: str) -> dict | None:
             SELECT m.id, m.merchant_key, m.business_name, m.razorpay_account_id, m.status, m.created_at
             FROM merchant_accounts m
             JOIN merchant_orders o ON o.merchant_account_id = m.id
-            WHERE o.order_id = ? AND m.status = 'ACTIVE'
-            LIMIT 1
+            WHERE o.order_id = ? AND m.status = 'ACTIVE' LIMIT 1
             """,
             (order_id,),
         ).fetchone()
@@ -167,17 +141,13 @@ def get_merchant_by_order_id(order_id: str) -> dict | None:
 
 
 def resolve_event_merchant(event: dict) -> dict | None:
-    """Resolve webhook merchant from account context or known order mapping.
-
-    Production webhooks should carry Razorpay account context. The order mapping
-    provides a safe fallback for this single-test-account hackathon environment.
-    """
+    """Resolve merchant from Razorpay account context or our order registry."""
     account_id = event.get("account_id")
     if account_id:
         init_merchant_registry()
         conn = get_connection()
         try:
-            row = conn.execute(
+            rows = conn.execute(
                 """
                 SELECT id, merchant_key, business_name, razorpay_account_id, status, created_at
                 FROM merchant_accounts
@@ -186,8 +156,10 @@ def resolve_event_merchant(event: dict) -> dict | None:
                 """,
                 (account_id,),
             ).fetchall()
-            if len(row) == 1:
-                return dict(row[0])
+            # One-to-one account mapping is required. Our demo merchants share
+            # one test credential, so order mapping remains the disambiguator.
+            if len(rows) == 1:
+                return dict(rows[0])
         finally:
             conn.close()
 

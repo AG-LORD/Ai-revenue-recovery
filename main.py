@@ -12,27 +12,20 @@ from starlette.responses import FileResponse, JSONResponse
 from app.core.config import FRONTEND_DIR, RAZORPAY_KEY_ID
 from app.repositories.database import init_db
 from app.repositories.merchant_migration import init_merchant_data
+from app.services.merchant_service import DEFAULT_MERCHANT_KEY, get_merchant_by_key, register_order
 from app.integrations.razorpay_client import create_razorpay_client
 from app.api.router import router
 
 logging.basicConfig(level=logging.INFO)
 
-# Initialise the SQLite database (creates tables if missing)
 init_db()
-# Add merchant tenancy without destroying existing single-merchant demo data.
 init_merchant_data()
 
 app = FastAPI(title="AI Revenue Recovery")
-
-# Instantiate the Razorpay client once and store in FastAPI state for DI
 app.state.razorpay_client = create_razorpay_client()
 
-# Include the router that defines all endpoints
 app.include_router(router)
 
-
-# Small server-side demo catalog. Prices are intentionally varied so the
-# customer journey looks like a real order rather than a fixed ₹500 test.
 STORE_CATALOG = [
     {"id": "wireless-headphones", "name": "Wireless Headphones", "category": "Audio", "price": 1299, "emoji": "🎧", "rating": "4.7", "delivery": "Tomorrow"},
     {"id": "smart-watch", "name": "Smart Watch", "category": "Wearables", "price": 1799, "emoji": "⌚", "rating": "4.6", "delivery": "Tomorrow"},
@@ -56,12 +49,18 @@ def build_demo_cart() -> list[dict]:
 
 @app.post("/api/store-order")
 async def create_store_order(request: Request):
-    """Create a fresh random demo-store order and matching Razorpay order."""
+    """Create a fresh demo-store order owned by the selected merchant."""
+    body = await request.json()
+    merchant_key = body.get("merchant_key") or DEFAULT_MERCHANT_KEY
+    merchant = get_merchant_by_key(merchant_key)
+    if not merchant:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Unknown merchant"})
+
     cart = build_demo_cart()
     subtotal = sum(item["line_total"] for item in cart)
     delivery = 0 if subtotal >= 999 else 49
     total = subtotal + delivery
-    receipt = f"store_{int(time.time())}_{random.randint(1000, 9999)}"
+    receipt = f"{merchant_key}_{int(time.time())}_{random.randint(1000, 9999)}"
 
     razorpay_client = request.app.state.razorpay_client
     try:
@@ -69,9 +68,16 @@ async def create_store_order(request: Request):
             amount=total * 100,
             currency="INR",
             receipt=receipt,
+            notes={"merchant_key": merchant_key, "merchant_account_id": str(merchant["id"])},
         )
+        register_order(order["id"], merchant["id"])
         return {
             "status": "success",
+            "merchant": {
+                "id": merchant["id"],
+                "merchant_key": merchant["merchant_key"],
+                "business_name": merchant["business_name"],
+            },
             "order_id": order["id"],
             "amount": order["amount"],
             "currency": order["currency"],
@@ -84,13 +90,9 @@ async def create_store_order(request: Request):
         }
     except Exception:
         logging.exception("Store order creation failed")
-        return JSONResponse(
-            status_code=503,
-            content={"status": "error", "message": "Store checkout is currently unavailable"},
-        )
+        return JSONResponse(status_code=503, content={"status": "error", "message": "Store checkout is currently unavailable"})
 
 
-# Serve static files from the ``frontend`` folder directly for convenience
 @app.get("/")
 async def home():
     return FileResponse(FRONTEND_DIR / "dashboard.html")

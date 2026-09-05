@@ -209,6 +209,7 @@ def process_failed_payment(
     payment: dict[str, Any],
     gateway: PaymentGateway,
     use_ai: bool = True,
+    synthetic_recovery: bool = False,
 ) -> dict[str, Any]:
     """Run detect, policy, explanation, and permitted recovery in order."""
 
@@ -292,10 +293,14 @@ def process_failed_payment(
     )
 
     # 5. Execute only the action permitted by deterministic policy.
-    recovery = execute_recovery_action(
-        case,
-        gateway,
-    )
+    if synthetic_recovery:
+        recovery = execute_recovery_action(
+            case,
+            gateway,
+            synthetic_link=True,
+        )
+    else:
+        recovery = execute_recovery_action(case, gateway)
 
     case = recovery.get("case", case)
 

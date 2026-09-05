@@ -16,6 +16,14 @@ _PRODUCTION_DATABASE_FINGERPRINT: tuple[int, str] | None = None
 _ORIGINAL_DATABASE_PATH: str | None = None
 
 
+def _configure_test_database() -> None:
+    global _TEST_DATABASE_DIRECTORY, _PRODUCTION_DATABASE_FINGERPRINT, _ORIGINAL_DATABASE_PATH
+    _TEST_DATABASE_DIRECTORY = Path(tempfile.mkdtemp(prefix="ai-revenue-recovery-pytest-"))
+    _PRODUCTION_DATABASE_FINGERPRINT = _fingerprint_if_present(PRODUCTION_DATABASE_PATH)
+    _ORIGINAL_DATABASE_PATH = os.environ.get("DATABASE_PATH")
+    os.environ["DATABASE_PATH"] = str(_TEST_DATABASE_DIRECTORY / "collection.db")
+
+
 def _fingerprint(path: Path) -> tuple[int, str]:
     return path.stat().st_size, hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -27,13 +35,10 @@ def _fingerprint_if_present(path: Path) -> tuple[int, str] | None:
     return _fingerprint(path)
 
 
-def pytest_configure() -> None:
-    """Redirect imports that initialize the database before test collection."""
-    global _TEST_DATABASE_DIRECTORY, _PRODUCTION_DATABASE_FINGERPRINT, _ORIGINAL_DATABASE_PATH
-    _TEST_DATABASE_DIRECTORY = Path(tempfile.mkdtemp(prefix="ai-revenue-recovery-pytest-"))
-    _PRODUCTION_DATABASE_FINGERPRINT = _fingerprint_if_present(PRODUCTION_DATABASE_PATH)
-    _ORIGINAL_DATABASE_PATH = os.environ.get("DATABASE_PATH")
-    os.environ["DATABASE_PATH"] = str(_TEST_DATABASE_DIRECTORY / "collection.db")
+_configure_test_database()
+from app.repositories import database as _database
+
+_database.DATABASE_PATH = str(_TEST_DATABASE_DIRECTORY / "collection.db")
 
 
 @pytest.fixture(autouse=True)

@@ -24,6 +24,28 @@ workflow that:
 The project uses Razorpay Test Mode when credentials are configured. It also
 includes controlled simulations and an offline synthetic batch experiment.
 
+## What Broke — And How We Got Out
+
+During real Razorpay Test Mode integration, we found that a Payment Link
+could appear usable while already being associated with an older recovery
+case. We also encountered webhook-tunnel failures during live testing.
+
+We did not weaken financial reconciliation to make the demo pass.
+
+Instead, the system was hardened to fail closed:
+- an already locally bound Payment Link is rejected;
+- existing recovery metadata in Razorpay notes is rejected;
+- amount and currency must match;
+- successful recovery requires validated payment/link identity;
+- ambiguous matches are recorded but never attributed to a recovery case.
+
+The webhook issue was isolated to the transport layer rather than being
+"fixed" by weakening payment validation. We replaced the failed tunnel and
+verified that Razorpay events reached the same FastAPI webhook handler.
+
+These failures improved the system's core principle: recover revenue when it
+is safe to do so, and stop when payment ownership cannot be proven.
+
 ## Why AI — and Why Not AI for Money Movement
 
 The system does **not** ask an LLM, “Should we retry this payment?”

@@ -87,12 +87,6 @@ def test_cancellation_simulation_creates_one_visible_link_case(monkeypatch) -> N
     router_module = importlib.import_module("app.api.router")
     gateway = VerifiedGateway()
     app.state.razorpay_client = gateway
-    monkeypatch.setattr(router_module, "RAZORPAY_DEMO_PAYMENT_LINK_ID", "plink_controlled")
-    monkeypatch.setattr(
-        router_module,
-        "RAZORPAY_DEMO_PAYMENT_LINK_URL",
-        "https://example.invalid/must-not-win",
-    )
     before = database.get_all_recovery_cases(
         merchant_account_id=router_module._default_merchant_id()
     )
@@ -102,9 +96,9 @@ def test_cancellation_simulation_creates_one_visible_link_case(monkeypatch) -> N
     assert response.status_code == 200
     case = response.json()["case"]
     assert case["recovery_status"] == "LINK_CREATED"
-    assert case["payment_link_id"] == "plink_controlled"
-    assert case["payment_link_url"] == "https://rzp.io/rzp/authoritative"
-    assert gateway.fetched == ["plink_controlled"]
+    assert case["payment_link_id"].startswith("plink_simulated_")
+    assert case["payment_link_url"] == ""
+    assert gateway.fetched == []
     assert gateway.created == 0
     after = database.get_all_recovery_cases(
         merchant_account_id=router_module._default_merchant_id()
@@ -114,11 +108,20 @@ def test_cancellation_simulation_creates_one_visible_link_case(monkeypatch) -> N
     assert new_cases[0]["id"] == case["id"]
 
     visible = TestClient(app).get("/api/cases").json()["cases"]
-    assert any(item["id"] == case["id"] and item["payment_link_url"] for item in visible)
+    assert any(
+        item["id"] == case["id"]
+        and item["payment_link_id"].startswith("plink_simulated_")
+        and not item["payment_link_url"]
+        for item in visible
+    )
     dashboard = (
         Path(__file__).resolve().parents[2] / "frontend" / "dashboard.html"
     ).read_text(encoding="utf-8")
-    assert "Open Link" in dashboard
+    assert "Synthetic Demo Link" in dashboard
+    assert "View Payment Activity" in dashboard
+    assert "View All Cases" in dashboard
+    assert "payment-activity-modal" in dashboard
+    assert "all-cases-modal" in dashboard
     assert "c.payment_link_url" in dashboard
 
 
@@ -126,12 +129,6 @@ def test_link_paid_simulation_uses_the_new_button_two_case(monkeypatch) -> None:
     from main import app
 
     router_module = importlib.import_module("app.api.router")
-    monkeypatch.setattr(router_module, "RAZORPAY_DEMO_PAYMENT_LINK_ID", "plink_button_two")
-    monkeypatch.setattr(
-        router_module,
-        "RAZORPAY_DEMO_PAYMENT_LINK_URL",
-        "https://rzp.io/rzp/button-two",
-    )
     app.state.razorpay_client = VerifiedGateway()
     client = TestClient(app)
     cancellation = client.post("/api/simulate", json={"scenario": "cancellation"})
@@ -143,42 +140,96 @@ def test_link_paid_simulation_uses_the_new_button_two_case(monkeypatch) -> None:
     assert paid.status_code == 200
     assert paid.json()["recovered"] is True
     assert paid.json()["case"]["id"] == case_id
+    assert paid.json()["case"]["recovery_status"] == "RECOVERED"
+    assert paid.json()["case"]["recovered_amount"] == paid.json()["case"]["amount"]
 
 
-def test_cancellation_simulation_fails_when_demo_link_is_missing(monkeypatch) -> None:
+def test_two_cancellation_and_link_paid_pairs_recover_separate_cases() -> None:
     from main import app
 
-    router_module = importlib.import_module("app.api.router")
-    monkeypatch.setattr(router_module, "RAZORPAY_DEMO_PAYMENT_LINK_ID", None)
-    monkeypatch.setattr(router_module, "RAZORPAY_DEMO_PAYMENT_LINK_URL", None)
+    client = TestClient(app)
+    first_cancel = client.post("/api/simulate", json={"scenario": "cancellation"})
+    first_paid = client.post("/api/simulate", json={"scenario": "link_paid"})
+    second_cancel = client.post("/api/simulate", json={"scenario": "cancellation"})
+    second_paid = client.post("/api/simulate", json={"scenario": "link_paid"})
 
-    response = TestClient(app).post("/api/simulate", json={"scenario": "cancellation"})
+    assert first_cancel.status_code == first_paid.status_code == 200
+    assert second_cancel.status_code == second_paid.status_code == 200
+    assert first_paid.json()["recovered"] is True
+    assert second_paid.json()["recovered"] is True
+    assert first_paid.json()["case"]["id"] != second_paid.json()["case"]["id"]
+    assert first_paid.json()["case"]["recovery_status"] == "RECOVERED"
+    assert second_paid.json()["case"]["recovery_status"] == "RECOVERED"
 
-    assert response.status_code == 503
-    assert "Demo Payment Link ID is not configured" in response.json()["message"]
 
-
-def test_cancellation_simulation_rejects_unusable_fetched_link(monkeypatch) -> None:
+def test_cancellation_simulation_can_be_repeated_without_a_real_link() -> None:
     from main import app
 
-    router_module = importlib.import_module("app.api.router")
-    monkeypatch.setattr(router_module, "RAZORPAY_DEMO_PAYMENT_LINK_ID", "plink_paid")
+    client = TestClient(app)
+    first = client.post("/api/simulate", json={"scenario": "cancellation"})
+    second = client.post("/api/simulate", json={"scenario": "cancellation"})
 
-    class PaidLinkGateway(VerifiedGateway):
-        def fetch_payment_link(self, payment_link_id: str) -> dict:
-            return {
-                "id": payment_link_id,
-                "short_url": "https://rzp.io/rzp/paid",
-                "amount": 50000,
-                "currency": "INR",
-                "status": "paid",
-            }
+    assert first.status_code == second.status_code == 200
+    assert first.json()["case"]["payment_link_id"] != second.json()["case"]["payment_link_id"]
+    assert first.json()["case"]["recovery_status"] == second.json()["case"]["recovery_status"] == "LINK_CREATED"
 
-    app.state.razorpay_client = PaidLinkGateway()
-    response = TestClient(app).post("/api/simulate", json={"scenario": "cancellation"})
+def test_link_paid_simulation_ignores_batch_and_foreign_cases() -> None:
+    from main import app
+    from app.repositories import database
+    from app.services.merchant_service import get_merchant_by_key
 
-    assert response.status_code == 502
-    assert "Payment link creation failed" in response.json()["message"]
+    merchant = get_merchant_by_key("urban_cart")
+    foreign = get_merchant_by_key("fit_gear")
+    database.create_or_get_recovery_case(
+        {
+            "id": "demo_batch_v1_foreign",
+            "order_id": "demo_batch_order_foreign",
+            "amount": 50000,
+            "currency": "INR",
+            "error_reason": "payment_cancelled",
+        },
+        {
+            "category": "customer_cancelled",
+            "diagnosis": "Customer cancelled checkout.",
+            "recoverable": True,
+            "recommended_action": "send_payment_reminder",
+            "max_retries": 0,
+        },
+        merchant_account_id=foreign["id"],
+    )
+    batch_case, _ = database.create_or_get_recovery_case(
+        {
+            "id": "demo_batch_v1_local",
+            "order_id": "demo_batch_order_local",
+            "amount": 50000,
+            "currency": "INR",
+            "error_reason": "payment_cancelled",
+        },
+        {
+            "category": "customer_cancelled",
+            "diagnosis": "Customer cancelled checkout.",
+            "recoverable": True,
+            "recommended_action": "send_payment_reminder",
+            "max_retries": 0,
+        },
+        merchant_account_id=merchant["id"],
+    )
+    database.update_case_policy(batch_case["id"], batch_case["payment_id"], {
+        "next_status": "LINK_CREATED",
+        "action_allowed": "send_payment_reminder",
+    })
+    database.update_case_recovery_action(
+        batch_case["id"],
+        batch_case["payment_id"],
+        "LINK_CREATED",
+        "SYNTHETIC_PAYMENT_LINK_CREATED",
+        payment_link_id="plink_simulated_batch",
+    )
+
+    response = TestClient(app).post("/api/simulate", json={"scenario": "link_paid"})
+
+    assert response.status_code == 409
+    assert "synthetic cancellation link" in response.json()["detail"]
 
 
 def test_unknown_failure_simulation_creates_distinct_cases(monkeypatch) -> None:
@@ -221,63 +272,14 @@ def test_unknown_failure_simulation_creates_distinct_cases(monkeypatch) -> None:
     assert second_replay.json()["status"] == "ignored"
 
 
-def test_demo_payment_link_rejects_existing_local_binding(monkeypatch) -> None:
-    from main import app
-    from app.repositories import database
-
-    router_module = importlib.import_module("app.api.router")
-    monkeypatch.setattr(router_module, "RAZORPAY_DEMO_PAYMENT_LINK_ID", "plink_already_bound")
-    app.state.razorpay_client = VerifiedGateway()
-
-    payment = {
-        "id": "pay_prebound_test",
-        "order_id": "order_prebound_test",
-        "amount": 50000,
-        "currency": "INR",
-    }
-    diagnosis = {"category": "customer_cancelled", "recoverable": True}
-    case, _ = database.create_or_get_recovery_case(payment, diagnosis)
-    database.update_case_recovery_action(
-        case_id=case["id"],
-        payment_id="pay_prebound_test",
-        recovery_status="LINK_CREATED",
-        action_result="PAYMENT_LINK_CREATED",
-        payment_link_id="plink_already_bound",
-        payment_link_url="https://rzp.io/rzp/prebound",
-    )
-
-    response = TestClient(app).post("/api/simulate", json={"scenario": "cancellation"})
-
-    assert response.status_code == 502
-    assert "Payment link creation failed" in response.json()["message"]
-
-    bound_cases = database.find_recovery_cases_by_payment_link_id("plink_already_bound")
-    assert len(bound_cases) == 1
-    assert bound_cases[0]["id"] == case["id"]
-
-
-def test_demo_payment_link_rejects_existing_razorpay_recovery_metadata(monkeypatch) -> None:
+def test_unknown_failure_simulation_escalates_without_gateway_dependency() -> None:
     from main import app
 
-    router_module = importlib.import_module("app.api.router")
-    monkeypatch.setattr(router_module, "RAZORPAY_DEMO_PAYMENT_LINK_ID", "plink_metadata_test")
+    response = TestClient(app).post("/api/simulate", json={"scenario": "unknown_failure"})
 
-    class MetadataLinkGateway(VerifiedGateway):
-        def fetch_payment_link(self, payment_link_id: str) -> dict:
-            return {
-                "id": payment_link_id,
-                "short_url": "https://rzp.io/rzp/meta",
-                "amount": 50000,
-                "currency": "INR",
-                "status": "created",
-                "notes": {
-                    "case_id": "793",
-                    "original_payment_id": "pay_existing",
-                },
-            }
-
-    app.state.razorpay_client = MetadataLinkGateway()
-    response = TestClient(app).post("/api/simulate", json={"scenario": "cancellation"})
-
-    assert response.status_code == 502
-    assert "Payment link creation failed" in response.json()["message"]
+    assert response.status_code == 200
+    case = response.json()["case"]
+    assert case["diagnosis_category"] == "unknown_failure"
+    assert case["action_taken"] == "escalate_manual_review"
+    assert case["recovery_status"] == "ESCALATED"
+    assert not case["payment_link_id"]

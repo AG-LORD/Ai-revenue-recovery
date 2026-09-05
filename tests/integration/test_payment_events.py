@@ -119,6 +119,86 @@ def test_duplicate_lifecycle_webhook_is_idempotent() -> None:
     assert len(database.get_payment_events(payment_id="pay_evt_duplicate_capture")) == 1
 
 
+def test_successful_checkout_activity_is_visible_without_a_recovery_case() -> None:
+    from main import app
+    from app.repositories import database
+    from app.services.merchant_service import register_order
+
+    order_id = "order_visible_checkout"
+    register_order(order_id, 1)
+    app.state.razorpay_client = VerifiedGateway()
+    event = _event("payment.captured", "evt_visible_checkout")
+    event["payload"]["payment"]["entity"]["order_id"] = order_id
+
+    response = TestClient(app).post(
+        "/webhook/razorpay",
+        json=event,
+        headers={"X-Razorpay-Signature": "valid"},
+    )
+
+    assert response.status_code == 200
+    assert database.get_case_by_payment_id("pay_evt_visible_checkout", merchant_account_id=1) is None
+    activity = TestClient(app).get("/api/payment-activity")
+    assert activity.status_code == 200
+    payment = next(
+        item
+        for item in activity.json()["payments"]
+        if item["payment_id"] == "pay_evt_visible_checkout"
+    )
+    assert payment["order_id"] == order_id
+    assert payment["amount_paise"] == 12345
+    assert payment["status"] == "captured"
+    assert payment["source"] == "razorpay_webhook"
+
+
+def test_payment_activity_orders_newest_captures_first_and_keeps_newest_with_many_records() -> None:
+    from app.repositories import database
+
+    for index in range(21):
+        event_id = f"evt_ordered_capture_{index:02d}"
+        assert _store_lifecycle_event(
+            event_id,
+            "payment.captured",
+            f"pay_ordered_{index:02d}",
+            f"order_ordered_{index:02d}",
+            10000 + index,
+        )
+
+    conn = database.get_connection()
+    try:
+        for index in range(21):
+            conn.execute(
+                "UPDATE payment_events SET received_at = ? WHERE event_id = ?",
+                (f"2026-09-05T12:{index:02d}:00+00:00", f"evt_ordered_capture_{index:02d}"),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    activity = database.get_successful_payments()
+    assert len(activity) == 21
+    assert activity[0]["payment_id"] == "pay_ordered_20"
+    assert activity[0]["timestamp"] == "2026-09-05T12:20:00+00:00"
+    assert activity[19]["payment_id"] == "pay_ordered_01"
+    assert activity[20]["payment_id"] == "pay_ordered_00"
+
+
+def test_captured_payment_activity_stays_outside_recovery_cases() -> None:
+    from app.repositories import database
+
+    assert _store_lifecycle_event(
+        "evt_activity_only_capture",
+        "payment.captured",
+        "pay_activity_only",
+        "order_activity_only",
+        309800,
+    )
+
+    activity = database.get_successful_payments()
+    assert any(item["payment_id"] == "pay_activity_only" for item in activity)
+    assert database.get_case_by_payment_id("pay_activity_only") is None
+
+
 def test_simulation_events_are_tagged_as_simulation() -> None:
     from main import app
     from app.repositories import database

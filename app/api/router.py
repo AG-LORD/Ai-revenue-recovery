@@ -11,8 +11,6 @@ import uuid
 
 # Import config for static paths and credentials
 from app.core.config import (
-    RAZORPAY_DEMO_PAYMENT_LINK_ID,
-    RAZORPAY_DEMO_PAYMENT_LINK_URL,
     RAZORPAY_KEY_ID,
     RAZORPAY_WEBHOOK_SECRET,
 )
@@ -40,105 +38,11 @@ from app.repositories.database import (
     record_payment_event,
     retry_failed_payment_event,
     update_payment_event_status,
-    find_recovery_cases_by_payment_link_id,
+    get_successful_payments,
 )
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-
-def _has_conflicting_recovery_metadata(notes: dict) -> bool:
-    """Check if Razorpay Payment Link notes contain recovery-binding metadata."""
-    if not isinstance(notes, dict):
-        return False
-
-    case_id = str(notes.get("case_id") or "").strip()
-    if case_id:
-        return True
-
-    original_payment_id = str(notes.get("original_payment_id") or "").strip()
-    if original_payment_id:
-        return True
-
-    recovery_source = str(notes.get("recovery_source") or "").strip().lower()
-    if recovery_source and (
-        recovery_source == "ai_revenue_recovery" or "recovery" in recovery_source
-    ):
-        return True
-
-    order_id = str(notes.get("order_id") or "").strip()
-    if order_id and (
-        order_id.startswith(("order_sim_", "demo_batch_order_", "recovery_"))
-        or "recovery" in order_id
-    ):
-        return True
-
-    return False
-
-
-class _DemoPaymentLinkGateway:
-    """Reuse one configured hosted test link for local cancellation demos."""
-
-    def __init__(self, gateway):
-        self._gateway = gateway
-
-    def create_payment_link(self, payload: dict) -> dict:
-        if not RAZORPAY_DEMO_PAYMENT_LINK_ID:
-            raise RuntimeError(
-                "Demo Payment Link ID is not configured; set "
-                "RAZORPAY_DEMO_PAYMENT_LINK_ID"
-            )
-        fetched = self._gateway.fetch_payment_link(RAZORPAY_DEMO_PAYMENT_LINK_ID)
-        fetched_id = fetched.get("id")
-        fetched_url = fetched.get("short_url")
-        fetched_amount = fetched.get("amount")
-        fetched_currency = fetched.get("currency")
-        fetched_status = fetched.get("status")
-        fetched_notes = fetched.get("notes") or {}
-        if fetched_id != RAZORPAY_DEMO_PAYMENT_LINK_ID:
-            raise RuntimeError("Configured demo Payment Link ID was not returned by Razorpay")
-        if not fetched_url:
-            raise RuntimeError("Configured demo Payment Link has no Razorpay short_url")
-        if not isinstance(fetched_amount, int) or fetched_amount <= 0:
-            raise RuntimeError("Configured demo Payment Link has an invalid amount")
-        if fetched_currency != "INR":
-            raise RuntimeError("Configured demo Payment Link currency must be INR")
-        if fetched_status not in {"created", "issued", "partially_paid"}:
-            raise RuntimeError(
-                f"Configured demo Payment Link is not usable (status={fetched_status})"
-            )
-        expected_amount = payload.get("amount")
-        if expected_amount is not None and fetched_amount != expected_amount:
-            raise RuntimeError("Configured demo Payment Link amount does not match the simulation")
-
-        # 6. Check if Payment Link is already bound to a local recovery case
-        existing_cases = find_recovery_cases_by_payment_link_id(fetched_id)
-        if existing_cases:
-            raise RuntimeError(
-                "Configured demo Payment Link is already bound to a recovery case"
-            )
-
-        # 7 & 8. Check if Razorpay notes contain existing recovery metadata
-        if _has_conflicting_recovery_metadata(fetched_notes):
-            raise RuntimeError(
-                "Configured demo Payment Link contains existing recovery metadata"
-            )
-
-        logger.info(
-            "controlled_demo_payment_link_fetched id=%s url=%s status=%s amount=%s currency=%s",
-            fetched_id,
-            fetched_url,
-            fetched_status,
-            fetched_amount,
-            fetched_currency,
-        )
-        return {
-            "id": fetched_id,
-            "short_url": fetched_url,
-        }
-
-    def __getattr__(self, name):
-        return getattr(self._gateway, name)
 
 
 def _simulation_failure_response(exc: Exception) -> JSONResponse:
@@ -235,6 +139,15 @@ async def list_api_cases():
     return {"total_cases": len(cases), "cases": cases}
 
 
+@router.get("/api/payment-activity")
+async def list_payment_activity():
+    return {
+        "payments": get_successful_payments(
+            merchant_account_id=_default_merchant_id()
+        )
+    }
+
+
 @router.get("/api/cases/{payment_id}")
 async def get_api_case(payment_id: str):
     """Return non-sensitive authoritative lifecycle and recovery state."""
@@ -318,20 +231,6 @@ async def simulate_scenario(request: Request):
     scenario = body_json.get("scenario", "bank_failure")
     simulation_token = uuid.uuid4().hex[:12]
     ts = int(time.time())
-    if scenario == "cancellation" and not RAZORPAY_DEMO_PAYMENT_LINK_ID:
-        reason = (
-            "Demo Payment Link ID is not configured; set "
-            "RAZORPAY_DEMO_PAYMENT_LINK_ID"
-        )
-        logger.error(
-            "controlled_demo_failed scenario=%s reason=%s",
-            scenario,
-            reason,
-        )
-        return JSONResponse(
-            status_code=503,
-            content={"status": "error", "message": f"Simulation failed: {reason}"},
-        )
     # Build payloads for each scenario (same as original implementation)
     if scenario == "bank_failure":
         payload = {
@@ -383,9 +282,23 @@ async def simulate_scenario(request: Request):
         }
     elif scenario == "link_paid":
         all_cases = get_all_recovery_cases(merchant_account_id=_default_merchant_id())
-        link_case = next((c for c in all_cases if c["recovery_status"] == "LINK_CREATED"), None)
+        link_case = next(
+            (
+                c
+                for c in all_cases
+                if c.get("payment_id", "").startswith("pay_cancel_")
+                and c.get("recovery_status") == "LINK_CREATED"
+                and c.get("action_taken") == "send_payment_reminder"
+                and c.get("payment_link_id", "").startswith("plink_simulated_")
+                and not c.get("recovered_amount")
+            ),
+            None,
+        )
         if not link_case:
-            raise HTTPException(status_code=409, detail="No LINK_CREATED recovery case is available")
+            raise HTTPException(
+                status_code=409,
+                detail="No eligible synthetic cancellation link is available",
+            )
         plink_id = link_case["payment_link_id"]
         orig_pay_id = link_case["payment_id"]
         ord_id = link_case["order_id"]
@@ -419,7 +332,7 @@ async def simulate_scenario(request: Request):
                 },
             },
         }
-    else:
+    elif scenario == "unknown_failure":
         payload = {
             "entity": "event",
             "event": "payment.failed",
@@ -452,18 +365,14 @@ async def simulate_scenario(request: Request):
             if scenario == "cancellation":
                 merchant_id = _default_merchant_id()
                 register_order(pay_ent["order_id"], merchant_id)
-                logger.info(
-                    "controlled_demo_start scenario=%s payment_id=%s order_id=%s "
-                    "merchant_account_id=%s demo_payment_link_id=%s demo_payment_link_url=%s",
-                    scenario,
-                    pay_ent.get("id"),
-                    pay_ent.get("order_id"),
-                    merchant_id,
-                    RAZORPAY_DEMO_PAYMENT_LINK_ID,
-                    "(fetched from Razorpay)",
+            if scenario == "cancellation":
+                outcome = process_failed_payment(
+                    pay_ent,
+                    razorpay_client,
+                    synthetic_recovery=True,
                 )
-                razorpay_client = _DemoPaymentLinkGateway(razorpay_client)
-            outcome = process_failed_payment(pay_ent, razorpay_client)
+            else:
+                outcome = process_failed_payment(pay_ent, razorpay_client)
             case = outcome["case"]
             recovery = outcome.get("recovery") or {}
             logger.info(
@@ -476,8 +385,8 @@ async def simulate_scenario(request: Request):
                 case.get("id"),
                 (outcome.get("policy") or {}).get("decision"),
                 recovery.get("action"),
-                RAZORPAY_DEMO_PAYMENT_LINK_ID if scenario == "cancellation" else None,
-                case.get("payment_link_url") if scenario == "cancellation" else None,
+                case.get("payment_link_id") if scenario == "cancellation" else None,
+                case.get("payment_link_url") if scenario == "cancellation" else "synthetic",
                 case.get("recovery_status"),
                 case.get("payment_link_id"),
                 case.get("payment_link_url"),
@@ -486,7 +395,7 @@ async def simulate_scenario(request: Request):
                 recovery.get("status") != "link_created"
                 or case.get("recovery_status") != "LINK_CREATED"
                 or not case.get("payment_link_id")
-                or not case.get("payment_link_url")
+                or not case.get("payment_link_id", "").startswith("plink_simulated_")
             ):
                 raise HTTPException(
                     status_code=502,
@@ -495,10 +404,21 @@ async def simulate_scenario(request: Request):
                         or "Cancellation simulation did not create a usable LINK_CREATED recovery case"
                     ),
                 )
-            return {"status": "ok", "message": f"{scenario} simulated successfully", "case": case}
+            return {
+                "status": "ok",
+                "message": f"{scenario} simulated successfully",
+                "simulation": "synthetic" if scenario == "cancellation" else "controlled",
+                "case": case,
+            }
         elif event_type == "payment_link.paid":
             rec_case, matched = process_recovery_success_event(event_type, payload)
-            return {"status": "ok", "message": "payment_link.paid simulated", "recovered": matched, "case": rec_case}
+            return {
+                "status": "ok",
+                "message": "payment_link.paid simulated",
+                "simulation": "synthetic",
+                "recovered": matched,
+                "case": rec_case,
+            }
         else:
             raise HTTPException(status_code=400, detail="Unknown simulation scenario")
     except Exception as exc:

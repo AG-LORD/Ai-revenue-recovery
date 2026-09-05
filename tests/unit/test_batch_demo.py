@@ -43,6 +43,10 @@ def test_batch_processes_through_workflow_and_calculates_persisted_metrics(
     cases = database.get_all_recovery_cases()
 
     assert report["payments_processed"] == 50
+    assert report["revenue_at_risk"] == 22250.0
+    assert report["revenue_recovered"] == 4250.0
+    assert round(report["recovery_rate"], 1) == 19.1
+    assert report["policy_violations"] == 0
     assert report["payments_processed"] == len(cases)
     assert sum(report["diagnosis_counts"].values()) == 50
     assert report["revenue_at_risk"] == sum(case["amount"] for case in cases)
@@ -65,6 +69,11 @@ def test_batch_processes_through_workflow_and_calculates_persisted_metrics(
     assert report["recovery_rate"] == expected_rate
     assert report["policy_violations"] == 0
     assert report["retry_attempts"] <= report["bounded_retries"] * 1
+    assert all(
+        not str(case.get("payment_link_url") or "").startswith("https://rzp.io/")
+        for case in cases
+        if case["payment_id"].startswith("demo_batch_v1_")
+    )
 
     # Make sure the batch test did not accidentally call real NIM.
     assert mock_nim.call_count == 0

@@ -56,7 +56,11 @@ def _legacy_recovery_case_by_event(
     return case
 
 
-def execute_recovery_action(case: Dict[str, Any], razorpay_client: PaymentGateway) -> Dict[str, Any]:
+def execute_recovery_action(
+    case: Dict[str, Any],
+    razorpay_client: PaymentGateway,
+    synthetic_link: bool = False,
+) -> Dict[str, Any]:
     case_id = case["id"]
     payment_id = case["payment_id"]
     action = case.get("action_taken")
@@ -108,20 +112,47 @@ def execute_recovery_action(case: Dict[str, Any], razorpay_client: PaymentGatewa
             "notes": {"case_id": str(case_id), "original_payment_id": payment_id, "order_id": case.get("order_id", ""), "recovery_source": "ai_revenue_recovery"},
         }
         try:
-            plink = razorpay_client.create_payment_link(link_payload)
+            if synthetic_link:
+                plink = {
+                    "id": f"plink_simulated_{case_id}",
+                    "short_url": None,
+                }
+            else:
+                plink = razorpay_client.create_payment_link(link_payload)
             plink_id = plink.get("id")
             plink_url = plink.get("short_url")
         except PaymentGatewayUnavailable:
-            logger.warning("Payment gateway unavailable for case %s; using demo link", case_id)
-            plink_id = f"plink_simulated_{case_id}"
-            plink_url = f"https://rzp.io/i/simulated_{case_id}"
+            logger.warning("Payment gateway unavailable for case %s", case_id)
+            updated_case = database.update_case_recovery_action(
+                case_id=case_id,
+                payment_id=payment_id,
+                recovery_status="ESCALATED",
+                action_result="PAYMENT_LINK_CREATION_FAILED: PaymentGatewayUnavailable",
+            )
+            database.add_audit_log(
+                payment_id=payment_id,
+                case_id=case_id,
+                actor="RECOVERY_ENGINE",
+                action="PAYMENT_LINK_CREATION_FAILED",
+                details="Razorpay Payment Link was unavailable; case escalated for manual review.",
+            )
+            return {
+                "action": "send_payment_reminder",
+                "status": "escalated",
+                "message": "Payment link creation failed. Escalated to manual review.",
+                "case": updated_case,
+            }
         except Exception as exc:
             logger.exception("Payment-link creation failed for case %s", case_id)
             updated_case = database.update_case_recovery_action(case_id=case_id, payment_id=payment_id, recovery_status="ESCALATED", action_result=f"PAYMENT_LINK_CREATION_FAILED: {type(exc).__name__}")
             database.add_audit_log(payment_id=payment_id, case_id=case_id, actor="RECOVERY_ENGINE", action="PAYMENT_LINK_CREATION_FAILED", details="Payment link could not be created; case escalated for manual review.")
             return {"action": "send_payment_reminder", "status": "escalated", "message": "Payment link creation failed. Escalated to manual review.", "case": updated_case}
-        updated_case = database.update_case_recovery_action(case_id=case_id, payment_id=payment_id, recovery_status="LINK_CREATED", action_result=f"PAYMENT_LINK_CREATED: {plink_url}", payment_link_id=plink_id, payment_link_url=plink_url)
-        database.add_audit_log(payment_id=payment_id, case_id=case_id, actor="RECOVERY_ENGINE", action="PAYMENT_LINK_CREATED", details=f"Generated Razorpay recovery link {plink_id} ({plink_url}) for Rs. {case['amount']}. Sent reminder.")
+        if not plink_id:
+            raise RuntimeError("Payment Link creation returned no identifier")
+        link_label = "SYNTHETIC_PAYMENT_LINK" if synthetic_link else "PAYMENT_LINK_CREATED"
+        audit_label = "Synthetic demo link" if synthetic_link else "Razorpay recovery link"
+        updated_case = database.update_case_recovery_action(case_id=case_id, payment_id=payment_id, recovery_status="LINK_CREATED", action_result=f"{link_label}: {plink_id}", payment_link_id=plink_id, payment_link_url=plink_url)
+        database.add_audit_log(payment_id=payment_id, case_id=case_id, actor="RECOVERY_ENGINE", action="PAYMENT_LINK_CREATED", details=f"Created {audit_label} {plink_id} for Rs. {case['amount']}. Sent reminder.")
         return {"action": "send_payment_reminder", "status": "link_created", "payment_link_id": plink_id, "payment_link_url": plink_url, "case": updated_case}
 
     updated_case = database.update_case_recovery_action(case_id=case_id, payment_id=payment_id, recovery_status="ESCALATED", action_result="FROZEN_FOR_MANUAL_OPERATOR_REVIEW")

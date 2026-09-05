@@ -150,7 +150,12 @@ def process_batch(
     gateway = UnavailableRazorpayClient()
 
     for index, payment in enumerate(events, start=1):
-        outcome = process_failed_payment(payment, gateway, use_ai=False)
+        outcome = process_failed_payment(
+            payment,
+            gateway,
+            use_ai=False,
+            synthetic_recovery=True,
+        )
         case = outcome["case"]
         if outcome["recovery"].get("status") == "link_created" and _should_simulate_recovery(index):
             _simulate_payment_link_paid(case, index)

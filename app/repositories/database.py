@@ -461,7 +461,16 @@ def get_successful_payments(merchant_account_id: int | None = None) -> list[dict
             "status": "captured",
             "event_id": canonical["event_id"],
             "event_type": canonical["event_type"],
+            "source": canonical["source"],
+            "timestamp": canonical["received_at"],
+            "_sort_id": canonical["id"],
         })
+    canonical_payments.sort(
+        key=lambda payment: (payment["timestamp"], payment["_sort_id"]),
+        reverse=True,
+    )
+    for payment in canonical_payments:
+        payment.pop("_sort_id", None)
     return canonical_payments
 
 

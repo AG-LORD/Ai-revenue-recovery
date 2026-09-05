@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AI Revenue Recovery | Live Operations Dashboard</title>
+    <title>Revive | Revenue Recovery Operations</title>
     <style>
       :root {
         --bg-primary: #0f172a;
@@ -17,6 +17,7 @@
         --accent-amber: #fbbf24;
         --accent-rose: #fb7185;
         --accent-purple: #c084fc;
+        --accent-primary: #60a5fa;
       }
 
       * {
@@ -53,8 +54,8 @@
       }
 
       .brand-title {
-        font-size: 26px;
-        font-weight: 700;
+        font-size: 24px;
+        font-weight: 750;
         color: var(--text-primary);
         display: flex;
         align-items: center;
@@ -65,6 +66,12 @@
         font-size: 13px;
         color: var(--text-muted);
         margin-top: 4px;
+      }
+
+      .brand-descriptor {
+        font-size: 11px;
+        color: #64748b;
+        margin-top: 5px;
       }
 
       .header-actions {
@@ -138,16 +145,16 @@
       /* Metrics Cards */
       .metrics-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-        gap: 16px;
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+        gap: 12px;
         margin-bottom: 24px;
       }
 
       .metric-card {
         background: var(--bg-card);
         border: 1px solid var(--border-color);
-        border-radius: 12px;
-        padding: 18px;
+        border-radius: 8px;
+        padding: 15px;
         position: relative;
         overflow: hidden;
       }
@@ -157,7 +164,7 @@
         position: absolute;
         top: 0;
         left: 0;
-        width: 4px;
+        width: 3px;
         height: 100%;
       }
 
@@ -211,16 +218,16 @@
       .journey-card {
         background: var(--bg-card);
         border: 1px solid var(--border-color);
-        border-radius: 12px;
-        padding: 20px 22px;
+        border-radius: 8px;
+        padding: 18px 20px;
         margin-bottom: 24px;
       }
       .journey-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 18px; flex-wrap: wrap; }
       .journey-title { font-size: 16px; font-weight: 700; }
       .journey-subtitle { color: var(--text-muted); font-size: 12px; margin-top: 4px; }
       .journey-flow { color: var(--accent-blue); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; }
-      .funnel-grid { display: grid; grid-template-columns: repeat(7, minmax(120px, 1fr)); gap: 10px; align-items: stretch; }
-      .funnel-step { position: relative; background: rgba(15, 23, 42, 0.5); border: 1px solid var(--border-color); border-radius: 9px; padding: 14px; }
+      .funnel-grid { display: grid; grid-template-columns: repeat(7, minmax(100px, 1fr)); gap: 8px; align-items: stretch; }
+      .funnel-step { position: relative; background: rgba(15, 23, 42, 0.35); border: 1px solid var(--border-color); border-radius: 6px; padding: 12px; }
       .funnel-step:not(:last-child)::after { content: "→"; position: absolute; right: -16px; top: 50%; transform: translateY(-50%); color: var(--text-muted); font-size: 18px; z-index: 1; }
       .funnel-label { color: var(--text-muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.35px; }
       .funnel-count { color: var(--text-primary); font-size: 25px; font-weight: 800; margin-top: 7px; }
@@ -229,15 +236,23 @@
       .funnel-step.recovered .funnel-count { color: var(--accent-green); }
       .funnel-step.escalated .funnel-count { color: var(--accent-amber); }
       @media (max-width: 900px) { .funnel-grid { grid-template-columns: repeat(2, minmax(135px, 1fr)); } .funnel-step:not(:last-child)::after { display: none; } }
+      @media (max-width: 1100px) { .metrics-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+      @media (max-width: 760px) { .metrics-grid, .guardrails-rules { grid-template-columns: 1fr; } .header-actions { width: 100%; flex-wrap: wrap; } }
 
-      .judge-narrative { background: linear-gradient(135deg, rgba(37, 99, 235, 0.14), rgba(15, 23, 42, 0.8)); border: 1px solid rgba(96, 165, 250, 0.35); border-radius: 12px; padding: 16px 20px; margin-bottom: 24px; }
+      .judge-narrative { background: rgba(30, 41, 59, 0.72); border: 1px solid var(--border-color); border-radius: 8px; padding: 15px 18px; margin-bottom: 24px; }
       .narrative-steps { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; color: var(--accent-blue); font-size: 12px; font-weight: 700; letter-spacing: 0.4px; }
       .narrative-steps span:not(:last-child)::after { content: "→"; margin-left: 8px; color: var(--text-muted); }
-      .batch-result { display: none; background: rgba(74, 222, 128, 0.08); border: 1px solid rgba(74, 222, 128, 0.35); border-radius: 12px; padding: 18px 22px; margin-bottom: 24px; }
+      .batch-result { display: none; background: rgba(74, 222, 128, 0.07); border: 1px solid rgba(74, 222, 128, 0.35); border-radius: 8px; padding: 16px 20px; margin-bottom: 24px; }
       .batch-result-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
       .batch-result-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
       .batch-result-value { font-size: 18px; font-weight: 700; color: var(--text-primary); }
       .batch-result-label { color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.45px; }
+      .guardrails-card { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; padding: 17px 20px; margin-bottom: 24px; }
+      .guardrails-header { margin-bottom: 16px; }
+      .guardrails-header h3 { font-size: 16px; font-weight: 700; color: var(--text-primary); margin-bottom: 4px; }
+      .guardrails-rules { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 12px; }
+      .guardrail-rule { min-height: 34px; font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 9px; padding: 7px 9px; border: 1px solid var(--border-color); border-radius: 6px; }
+      .guardrail-icon { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--accent-primary); font-size: 0; }
       .case-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 22px; }
       .case-summary-item { background: rgba(15, 23, 42, 0.45); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 12px; }
       .case-summary-item.emphasis { border-color: rgba(74, 222, 128, 0.45); }
@@ -248,10 +263,10 @@
 
       /* Simulation Controls Banner */
       .sim-banner {
-        background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
-        border: 1px solid #3b82f6;
-        border-radius: 12px;
-        padding: 18px 22px;
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 17px 20px;
         margin-bottom: 24px;
         display: flex;
         justify-content: space-between;
@@ -273,17 +288,17 @@
 
       .sim-buttons {
         display: flex;
-        gap: 10px;
+        gap: 8px;
         flex-wrap: wrap;
       }
 
       .btn-sim {
-        background: #1e293b;
+        background: #172236;
         color: var(--text-primary);
         border: 1px solid var(--border-color);
-        padding: 8px 14px;
+        padding: 8px 12px;
         font-size: 12px;
-        border-radius: 6px;
+        border-radius: 5px;
         font-weight: 600;
         cursor: pointer;
         transition: all 0.2s;
@@ -298,7 +313,7 @@
       .table-card {
         background: var(--bg-card);
         border: 1px solid var(--border-color);
-        border-radius: 12px;
+        border-radius: 8px;
         overflow: hidden;
         margin-bottom: 24px;
       }
@@ -429,6 +444,14 @@
         flex-direction: column;
         overflow: hidden;
         box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+      }
+
+      .modal-content.modal-wide {
+        max-width: 1180px;
+      }
+
+      .modal-table {
+        min-width: 900px;
       }
 
       .modal-header {
@@ -630,34 +653,35 @@
       <header>
         <div>
           <div class="brand-title">
-            <span>🛡️ AI Revenue Recovery</span>
+            <span>Revive</span>
             <span class="badge badge-live"
               ><span class="dot-pulse"></span> Active Engine</span
             >
           </div>
           <div class="brand-subtitle">
-            Deterministic Policy Firewall & AI Recovery Agent | Razorpay Test
-            Mode
+            Revenue Recovery Operations
           </div>
+          <div class="brand-descriptor">Razorpay Test Mode · Policy-governed recovery</div>
         </div>
 
         <div class="header-actions">
           <a href="/checkout" target="_blank" class="btn btn-primary"
-            >🛒 Open Store Checkout</a
+            >            Open Store Checkout</a
           >
+          <button onclick="openPaymentActivityModal()" class="btn btn-outline">
+            View Payment Activity
+          </button>
           <button onclick="loadDashboardData()" class="btn btn-outline">
-            🔄 Refresh
+            Refresh
           </button>
         </div>
       </header>
 
       <section class="judge-narrative" aria-label="System narrative">
-        <strong>Revenue recovery in one view:</strong>
-        deterministic policy authorizes bounded action, while AI explains the case and drafts communication.
-        Every outcome is measured from persisted payment and recovery state.
+        <strong>Revive identifies failed payments, applies deterministic recovery policy, and verifies successful recovery server-side.</strong>
         <div class="narrative-steps">
-          <span>DETECT</span><span>DIAGNOSE</span><span>POLICY</span>
-          <span>ACT</span><span>RECOVER</span><span>MEASURE</span>
+          <span>DETECT</span><span>DIAGNOSE</span><span>DECIDE</span>
+          <span>RECOVER</span><span>MEASURE</span>
         </div>
       </section>
 
@@ -763,7 +787,7 @@
             <h2 class="journey-title" id="journey-title">Recovery Journey</h2>
             <p class="journey-subtitle">From a failed payment to a policy-safe recovery outcome.</p>
           </div>
-          <div class="journey-flow">Failure detected → Diagnosis → Policy decision → Recovery action → Revenue recovered</div>
+          <div class="journey-flow">Failure → Diagnosis → Policy → Action → Recovery</div>
         </div>
         <div class="funnel-grid">
           <div class="funnel-step"><div class="funnel-label">Payments processed</div><div class="funnel-count" id="funnel-processed">0</div><div class="funnel-rate" id="funnel-processed-rate">No payments yet</div></div>
@@ -779,48 +803,56 @@
       <!-- Live Simulation Actions -->
       <div class="sim-banner">
         <div class="sim-info">
-          <div class="badge" style="display: inline-block; background: rgba(56, 189, 248, 0.14); color: var(--accent-blue); border: 1px solid rgba(56, 189, 248, 0.3); margin-bottom: 8px;">CONTROLLED FAILURE SIMULATION</div>
-          <h3>⚡ Controlled Recovery Demo</h3>
+          <div class="badge" style="display: inline-block; background: rgba(56, 189, 248, 0.14); color: var(--accent-blue); border: 1px solid rgba(56, 189, 248, 0.3); margin-bottom: 8px;">CONTROLLED EXPERIMENT</div>
+          <h3>Controlled Recovery Demo</h3>
           <p>
-            Trigger test scenarios directly to observe instant diagnosis, policy
-            gating, recovery execution, and audit updates.
+            Reproduce key recovery paths without changing production financial state.
           </p>
         </div>
 
         <div class="sim-buttons">
           <button onclick="runBatchDemo()" class="btn-sim">
-            📊 Run 50-Case Batch Demo
+            Run 50-Case Batch Demo
           </button>
           <button onclick="triggerSimulation('bank_failure')" class="btn-sim">
-            🏦 1. Bank Glitch (Retry Flow)
+            <span class="control-label">REAL</span> Bank Glitch — Real Retry Flow
           </button>
           <button onclick="triggerSimulation('cancellation')" class="btn-sim">
-            🛒 2. Simulated Failure (Link Flow)
+            <span class="control-label">SYNTHETIC</span> Customer Cancelled — Synthetic Link Flow
           </button>
           <button onclick="triggerSimulation('link_paid')" class="btn-sim">
-            💳 3. Customer Pays Link (Recover ₹500)
-          </button>
-          <button
-            onclick="triggerSimulation('unknown_failure')"
-            class="btn-sim"
-          >
-            🛑 4. Unclassified Error (Escalation)
+            <span class="control-label">SYNTHETIC</span> Pay Synthetic Link — Recover ₹500
           </button>
         </div>
       </div>
 
+      <!-- Recovery Guardrails -->
+      <section class="guardrails-card">
+        <div class="guardrails-header">
+          <h3>Recovery Guardrails</h3>
+          <div style="font-size: 12px; color: var(--text-muted);">Financial actions are policy-gated and verified server-side.</div>
+        </div>
+        <div class="guardrails-rules">
+          <div class="guardrail-rule"><span class="guardrail-icon"></span> 1 retry max</div>
+          <div class="guardrail-rule"><span class="guardrail-icon"></span> Customer cancellation → reminder only</div>
+          <div class="guardrail-rule"><span class="guardrail-icon"></span> Unknown failure → manual review</div>
+          <div class="guardrail-rule"><span class="guardrail-icon"></span> Ambiguous payment → no recovery</div>
+          <div class="guardrail-rule"><span class="guardrail-icon"></span> Recovered case → terminal</div>
+          <div class="guardrail-rule"><span class="guardrail-icon"></span> Amount/currency mismatch → reject</div>
+        </div>
+      </section>
+
       <section id="batch-result" class="batch-result" aria-live="polite">
         <div class="batch-result-header">
           <div>
-            <div class="badge" style="display: inline-block; background: rgba(74, 222, 128, 0.12); color: var(--accent-green); border: 1px solid rgba(74, 222, 128, 0.35);">SYNTHETIC DEMO</div>
-            <h3 style="margin-top: 8px;">50-case experiment complete</h3>
+            <div class="badge" style="display: inline-block; background: rgba(74, 222, 128, 0.12); color: var(--accent-green); border: 1px solid rgba(74, 222, 128, 0.35);">SYNTHETIC</div>
+            <h3 style="margin-top: 8px;">50-case controlled experiment</h3>
           </div>
           <div style="font-size: 12px; color: var(--text-muted);">
-            Recovery mode: <strong id="batch-mode">synthetic_confirmation</strong>
+            Controlled experiment · Seed <strong id="batch-seed-header">20260829</strong>
           </div>
         </div>
         <div class="batch-result-grid">
-          <div><div class="batch-result-label">Seed</div><div class="batch-result-value" id="batch-seed">—</div></div>
           <div><div class="batch-result-label">Payments</div><div class="batch-result-value" id="batch-payments">—</div></div>
           <div><div class="batch-result-label">At risk</div><div class="batch-result-value" id="batch-risk">—</div></div>
           <div><div class="batch-result-label">Recovered</div><div class="batch-result-value" id="batch-recovered">—</div></div>
@@ -834,9 +866,19 @@
       <!-- Recovery Cases Table -->
       <div class="table-card">
         <div class="table-header">
-          <div class="table-title">Recent Recovery Cases & Financial State</div>
-          <div style="font-size: 12px; color: var(--text-muted)">
-            Real-time SQLite State Machine
+          <div>
+            <div class="table-title">Recent Recovery Cases</div>
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px">
+              Latest revenue-at-risk opportunities
+            </div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 12px">
+            <button onclick="openAllCasesModal()" class="btn btn-outline btn-sm">
+              View All Cases
+            </button>
+            <div style="font-size: 12px; color: var(--text-muted)">
+              Latest 12
+            </div>
           </div>
         </div>
 
@@ -875,6 +917,82 @@
       </div>
     </div>
 
+    <!-- Payment Activity Modal -->
+    <div id="payment-activity-modal" class="modal">
+      <div class="modal-content modal-wide">
+        <div class="modal-header">
+          <div>
+            <h3 style="font-size: 16px">Recent Payment Activity</h3>
+            <p style="font-size: 12px; color: var(--text-muted); margin-top: 4px">
+              Server-confirmed captures from the payment lifecycle ledger
+            </p>
+          </div>
+          <button class="close-btn" onclick="closePaymentActivityModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="table-responsive">
+            <table class="modal-table">
+              <thead>
+                <tr>
+                  <th>Payment ID</th>
+                  <th>Order ID</th>
+                  <th>Amount</th>
+                  <th>Status</th>
+                  <th>Source</th>
+                  <th>Timestamp</th>
+                </tr>
+              </thead>
+              <tbody id="payment-activity-tbody">
+                <tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 30px;">Loading payment activity...</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div style="display: flex; justify-content: flex-end; margin-top: 18px">
+            <button onclick="closePaymentActivityModal()" class="btn btn-outline">Close</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- All Recovery Cases Modal -->
+    <div id="all-cases-modal" class="modal">
+      <div class="modal-content modal-wide">
+        <div class="modal-header">
+          <div>
+            <h3 style="font-size: 16px">All Recovery Cases</h3>
+            <p style="font-size: 12px; color: var(--text-muted); margin-top: 4px">
+              Complete revenue-at-risk history
+            </p>
+          </div>
+          <button class="close-btn" onclick="closeAllCasesModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="table-responsive">
+            <table class="modal-table">
+              <thead>
+                <tr>
+                  <th>Case #</th>
+                  <th>Payment ID</th>
+                  <th>Amount</th>
+                  <th>Diagnosis & Root Cause</th>
+                  <th>Policy Action</th>
+                  <th>Retries</th>
+                  <th>Status</th>
+                  <th>Recovery Action / Link</th>
+                  <th>Recovered</th>
+                  <th>Audit Trail</th>
+                </tr>
+              </thead>
+              <tbody id="all-cases-tbody"></tbody>
+            </table>
+          </div>
+          <div style="display: flex; justify-content: flex-end; margin-top: 18px">
+            <button onclick="closeAllCasesModal()" class="btn btn-outline">Close</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Audit Trail Modal -->
     <div id="audit-modal" class="modal">
       <div class="modal-content">
@@ -904,7 +1022,7 @@
           <section class="ai-intelligence" aria-labelledby="ai-intelligence-title">
             <div class="ai-intelligence-header">
               <div class="ai-intelligence-title" id="ai-intelligence-title">
-                ✨ AI Recovery Intelligence
+                AI Recovery Intelligence
               </div>
               <div class="ai-control-badge">
                 AI: communication only · Policy: financial authority
@@ -912,6 +1030,9 @@
             </div>
             <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">
               AI explains the case and drafts customer communication. It does not decide, authorize, or execute recovery.
+            </div>
+            <div style="font-size: 13px; color: var(--accent-blue); font-weight: 600; margin-bottom: 14px; padding: 10px; background: rgba(56, 189, 248, 0.1); border-radius: 6px; border-left: 3px solid var(--accent-blue);">
+              AI explains the recovery decision; deterministic policy controls money movement.
             </div>
             <div class="ai-facts">
               <div class="ai-fact">
@@ -989,6 +1110,14 @@
           } else {
             renderCasesTableError("Recovery cases are temporarily unavailable.");
           }
+
+          const activityRes = await fetch("/api/payment-activity");
+          if (activityRes.ok) {
+            const activity = await activityRes.json();
+            renderPaymentActivity(activity.payments);
+          } else {
+            renderPaymentActivityError("Payment activity is temporarily unavailable.");
+          }
         } catch (err) {
           console.error("Dashboard refresh error:", err);
           document.getElementById("cases-tbody").innerHTML =
@@ -1022,64 +1151,97 @@
           `<tr><td colspan="10" style="text-align: center; color: var(--accent-amber); padding: 30px;">${escapeHtml(message)}</td></tr>`;
       }
 
+      function renderPaymentActivityError(message) {
+        document.getElementById("payment-activity-tbody").innerHTML =
+          `<tr><td colspan="6" style="text-align: center; color: var(--accent-amber); padding: 30px;">${escapeHtml(message)}</td></tr>`;
+      }
+
+      function renderPaymentActivity(payments) {
+        const tbody = document.getElementById("payment-activity-tbody");
+        if (!payments || payments.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 30px;">No captured payment activity yet.</td></tr>`;
+          return;
+        }
+        tbody.innerHTML = payments.slice(0, 20).map((payment) => `
+          <tr>
+            <td><span style="font-family: monospace; font-size: 11px;">${escapeHtml(payment.payment_id || "—")}</span></td>
+            <td><span style="font-family: monospace; font-size: 11px;">${escapeHtml(payment.order_id || "—")}</span></td>
+            <td><strong>₹${escapeHtml((Number(payment.amount_paise || 0) / 100).toFixed(2))}</strong></td>
+            <td><span class="status-badge status-RECOVERED">${escapeHtml(String(payment.status || "captured").toUpperCase())}</span></td>
+            <td>${escapeHtml(payment.source === "simulation" ? "Controlled simulation" : "Razorpay webhook")}</td>
+            <td>${escapeHtml(payment.timestamp || "—")}</td>
+          </tr>
+        `).join("");
+      }
+
       function renderCasesTable(cases) {
-        const tbody = document.getElementById("cases-tbody");
         recoveryCasesByPaymentId = Object.fromEntries(
           (cases || []).map((caseItem) => [caseItem.payment_id, caseItem]),
         );
+        renderCaseRows((cases || []).slice(0, 12), "cases-tbody");
+        renderCaseRows(cases || [], "all-cases-tbody");
+      }
+
+      function renderCaseRows(cases, targetId) {
+        const tbody = document.getElementById(targetId);
+        if (!tbody) return;
         if (!cases || cases.length === 0) {
           tbody.innerHTML = `<tr><td colspan="10" style="text-align: center; color: var(--text-muted); padding: 30px;">No recovery cases recorded yet. Trigger a simulation or open the checkout store!</td></tr>`;
           return;
         }
 
-        tbody.innerHTML = cases
-          .map((c) => {
-            let linkHtml = '<span style="color: #64748b;">—</span>';
-            const paymentLinkUrl = safeExternalUrl(c.payment_link_url);
-            if (paymentLinkUrl) {
-              linkHtml = `<a href="${escapeHtml(paymentLinkUrl)}" target="_blank" rel="noopener noreferrer" class="plink-btn">Open Link</a>`;
-            } else if (c.action_taken === "retry_payment") {
-              linkHtml = `<span style="font-size: 12px; color: var(--accent-amber);">Bounded Retry #${c.retry_count}</span>`;
-            } else if (c.action_taken === "escalate_manual_review") {
-              linkHtml = `<span style="font-size: 12px; color: var(--accent-rose);">Human Review</span>`;
-            }
+        tbody.innerHTML = cases.map((c) => {
+          const paymentId = String(c.payment_id || "");
+          const isBatchSynthetic = paymentId.startsWith("demo_batch_v1_");
+          const isSyntheticLink = String(c.payment_link_id || "").startsWith("plink_simulated_");
+          const isSynthetic = isBatchSynthetic || isSyntheticLink;
+          let linkHtml = '<span style="color: #64748b;">—</span>';
+          const paymentLinkUrl = isSynthetic ? null : safeExternalUrl(c.payment_link_url);
+          if (paymentLinkUrl) {
+            linkHtml = `<a href="${escapeHtml(paymentLinkUrl)}" target="_blank" rel="noopener noreferrer" class="plink-btn">Open Link</a>`;
+          } else if (isBatchSynthetic && c.action_taken === "retry_payment") {
+            linkHtml = '<span style="font-size: 12px; color: var(--accent-amber);">Synthetic Retry</span>';
+          } else if (isBatchSynthetic && c.action_taken === "send_payment_reminder") {
+            linkHtml = '<span style="font-size: 12px; color: var(--accent-blue);">Synthetic Reminder</span>';
+          } else if (isSyntheticLink) {
+            linkHtml = '<span style="font-size: 12px; color: var(--accent-blue);">Synthetic Demo Link</span>';
+          } else if (c.action_taken === "retry_payment") {
+            linkHtml = `<span style="font-size: 12px; color: var(--accent-amber);">Bounded Retry #${escapeHtml(c.retry_count)}</span>`;
+          } else if (c.action_taken === "escalate_manual_review") {
+            linkHtml = '<span style="font-size: 12px; color: var(--accent-rose);">Human Review</span>';
+          }
 
-            const recAmount =
-              c.recovered_amount > 0
-                ? `<span style="color: var(--accent-green); font-weight: 700;">₹${escapeHtml(c.recovered_amount)}</span>`
-                : `<span style="color: #64748b;">₹0.00</span>`;
+          const recAmount = c.recovered_amount > 0
+            ? `<span style="color: var(--accent-green); font-weight: 700;">₹${escapeHtml(c.recovered_amount)}</span>`
+            : `<span style="color: #64748b;">₹0.00</span>`;
+          const aiReasonTooltip = c.ai_explanation ? `title="${escapeHtml(c.ai_explanation)}"` : "";
+          const auditArgument = escapeHtml(JSON.stringify(paymentId));
 
-            const aiReasonTooltip = c.ai_explanation
-              ? `title="${escapeHtml(c.ai_explanation)}"`
-              : "";
-            const auditArgument = escapeHtml(JSON.stringify(String(c.payment_id ?? "")));
-
-            return `
-                <tr>
-                    <td><strong>#${escapeHtml(c.id)}</strong></td>
-                    <td>
-                        <span style="font-family: monospace; font-size: 11px;">${escapeHtml(c.payment_id)}</span>
-                        <div style="font-size: 10px; color: var(--text-muted);">${escapeHtml(c.order_id)}</div>
-                    </td>
-                    <td><strong>₹${escapeHtml(c.amount)}</strong></td>
-                    <td ${aiReasonTooltip}>
-                        <div style="font-weight: 600;">${escapeHtml(formatCategory(c.diagnosis_category))}</div>
-                        <div style="font-size: 11px; color: var(--text-muted);">${escapeHtml(c.error_reason || c.payment_method)}</div>
-                    </td>
-                    <td>
-                        <span style="font-size: 11px; font-weight: 600; color: var(--accent-blue);">${escapeHtml(c.action_taken || "Pending")}</span>
-                    </td>
-                    <td>${escapeHtml(c.retry_count)}/${escapeHtml(c.max_retries)}</td>
-                    <td><span class="status-badge status-${escapeHtml(c.recovery_status)}">${escapeHtml(formatRecoveryStatus(c.recovery_status))}</span></td>
-                    <td>${linkHtml}</td>
-                    <td>${recAmount}</td>
-                    <td>
-                        <button onclick="viewAuditTrail(${auditArgument})" class="btn btn-outline btn-sm">📜 Audit</button>
-                    </td>
-                </tr>
-            `;
-          })
-          .join("");
+          return `
+              <tr>
+                  <td><strong>#${escapeHtml(c.id)}</strong></td>
+                  <td>
+                      <span style="font-family: monospace; font-size: 11px;">${escapeHtml(paymentId)}</span>
+                      <div style="font-size: 10px; color: var(--text-muted);">${escapeHtml(c.order_id)}</div>
+                  </td>
+                  <td><strong>₹${escapeHtml(c.amount)}</strong></td>
+                  <td ${aiReasonTooltip}>
+                      <div style="font-weight: 600;">${escapeHtml(formatCategory(c.diagnosis_category))}</div>
+                      <div style="font-size: 11px; color: var(--text-muted);">${escapeHtml(c.error_reason || c.payment_method)}</div>
+                  </td>
+                  <td>
+                      <span style="font-size: 11px; font-weight: 600; color: var(--accent-blue);">${escapeHtml(c.action_taken || "Pending")}</span>
+                  </td>
+                  <td>${escapeHtml(c.retry_count)}/${escapeHtml(c.max_retries)}</td>
+                  <td><span class="status-badge status-${escapeHtml(c.recovery_status)}">${escapeHtml(formatRecoveryStatus(c.recovery_status))}</span></td>
+                  <td>${linkHtml}</td>
+                  <td>${recAmount}</td>
+                  <td>
+                      <button onclick="viewAuditTrail(${auditArgument})" class="btn btn-outline btn-sm">📜 Audit</button>
+                  </td>
+              </tr>
+          `;
+        }).join("");
       }
 
       function formatCategory(cat) {
@@ -1234,13 +1396,29 @@
         document.getElementById("audit-modal").style.display = "none";
       }
 
+      function openPaymentActivityModal() {
+        document.getElementById("payment-activity-modal").style.display = "flex";
+      }
+
+      function closePaymentActivityModal() {
+        document.getElementById("payment-activity-modal").style.display = "none";
+      }
+
+      function openAllCasesModal() {
+        document.getElementById("all-cases-modal").style.display = "flex";
+      }
+
+      function closeAllCasesModal() {
+        document.getElementById("all-cases-modal").style.display = "none";
+      }
+
       // Run the deterministic 50-payment batch demo
       async function runBatchDemo() {
         showToast("Running 50-case batch demo...");
         const batchButton = document.querySelector('button[onclick="runBatchDemo()"]');
         if (batchButton) {
           batchButton.disabled = true;
-          batchButton.innerText = "⏳ Running 50-Case Demo...";
+          batchButton.innerText = "Running 50-Case Demo...";
         }
 
         try {
@@ -1255,9 +1433,7 @@
             throw new Error(data.message || "Batch demo failed");
           }
 
-          showToast(
-            `Batch complete: ${data.report.payments_processed} payments processed`,
-          );
+          showToast("50-case controlled experiment complete.");
           renderBatchResult(data.report);
 
           await loadDashboardData();
@@ -1267,14 +1443,14 @@
         } finally {
           if (batchButton) {
             batchButton.disabled = false;
-            batchButton.innerText = "📊 Run 50-Case Batch Demo";
+            batchButton.innerText = "Run 50-Case Batch Demo";
           }
         }
       }
 
       function renderBatchResult(report) {
         const money = (value) => `₹${Number(value || 0).toLocaleString("en-IN", {minimumFractionDigits: 2})}`;
-        document.getElementById("batch-seed").innerText = report.seed ?? "—";
+        document.getElementById("batch-seed-header").innerText = report.seed ?? "—";
         document.getElementById("batch-payments").innerText = report.payments_processed ?? "—";
         document.getElementById("batch-risk").innerText = money(report.revenue_at_risk);
         document.getElementById("batch-recovered").innerText = money(report.revenue_recovered);
@@ -1282,13 +1458,12 @@
         document.getElementById("batch-rate").innerText = `${Number(report.recovery_rate || 0).toFixed(2)}%`;
         document.getElementById("batch-successes").innerText = report.successful_recoveries ?? "—";
         document.getElementById("batch-violations").innerText = report.policy_violations ?? "—";
-        document.getElementById("batch-mode").innerText = report.recovery_mode || "synthetic_confirmation";
         document.getElementById("batch-result").style.display = "block";
       }
 
       // Trigger an individual simulation from the dashboard controls.
       async function triggerSimulation(scenario) {
-        showToast(`Triggering ${scenario.replace("_", " ")} simulation...`);
+        showToast(`Running ${scenario.replace("_", " ")} simulation...`);
         try {
           const res = await fetch("/api/simulate", {
             method: "POST",
@@ -1299,7 +1474,13 @@
           if (!res.ok) {
             throw new Error(data.message || "Simulation failed");
           }
-          showToast(`Simulation completed: ${data.message || data.status}`);
+          const messages = {
+            cancellation: "Customer cancellation simulated — synthetic reminder created.",
+            link_paid: "Synthetic payment confirmed — ₹500 recovered.",
+            unknown_failure: "Unknown failure isolated — case escalated for manual review.",
+            bank_failure: "Bank glitch simulated — real bounded retry case created.",
+          };
+          showToast(messages[scenario] || `Simulation completed: ${data.message || data.status}`);
           await loadDashboardData();
         } catch (err) {
           console.error("Simulation error:", err);
@@ -1318,10 +1499,13 @@
 
       // Close modal on outside click
       window.onclick = function (event) {
-        const modal = document.getElementById("audit-modal");
-        if (event.target == modal) {
-          closeAuditModal();
-        }
+        const modalClosers = {
+          "audit-modal": closeAuditModal,
+          "payment-activity-modal": closePaymentActivityModal,
+          "all-cases-modal": closeAllCasesModal,
+        };
+        const closeModal = modalClosers[event.target?.id];
+        if (closeModal) closeModal();
       };
 
       // Auto-poll every 4 seconds

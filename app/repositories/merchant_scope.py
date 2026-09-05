@@ -28,14 +28,31 @@ def find_case_for_recovery_event_scoped(
     try:
         row = None
         if payment_link_id:
-            row = conn.execute(
+            rows = conn.execute(
                 """
                 SELECT * FROM recovery_cases
                 WHERE merchant_account_id = ? AND payment_link_id = ?
-                ORDER BY id DESC LIMIT 1
+                  AND recovery_status != 'RECOVERED'
+                ORDER BY id ASC
                 """,
                 (merchant_account_id, payment_link_id),
-            ).fetchone()
+            ).fetchall()
+            if len(rows) == 1:
+                row = rows[0]
+            elif len(rows) > 1:
+                return None
+
+            if not row:
+                recovered_rows = conn.execute(
+                    """
+                    SELECT * FROM recovery_cases
+                    WHERE merchant_account_id = ? AND payment_link_id = ?
+                    ORDER BY id DESC
+                    """,
+                    (merchant_account_id, payment_link_id),
+                ).fetchall()
+                if len(recovered_rows) == 1:
+                    row = recovered_rows[0]
 
         if not row and original_payment_id:
             row = conn.execute(

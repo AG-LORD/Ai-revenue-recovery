@@ -405,6 +405,69 @@ def test_payment_link_exact_match_recovers_with_amount_and_currency() -> None:
     assert case["recovery_source"] == "PAYMENT_LINK"
 
 
+def test_real_style_payment_link_event_resolves_by_exact_link_without_notes() -> None:
+    from main import app
+    from app.repositories import database
+
+    app.state.razorpay_client = VerifiedGateway()
+    client = TestClient(app)
+    case = _link_case(database, "pay_real_link_original", "order_real_link")
+    event = {
+        "id": "evt_real_link_paid",
+        "event": "payment_link.paid",
+        "payload": {
+            "payment_link": {
+                "entity": {
+                    "id": "plink_exact",
+                    "amount_paid": 50000,
+                    "currency": "INR",
+                    "status": "paid",
+                }
+            },
+            "payment": {
+                "entity": {
+                    "id": "pay_real_link_capture",
+                    "amount": 50000,
+                    "currency": "INR",
+                    "status": "captured",
+                }
+            },
+        },
+    }
+
+    response = _webhook(client, event)
+
+    assert response.json()["recovered"] is True
+    updated = database.get_case_by_payment_id("pay_real_link_original")
+    assert updated["id"] == case["id"]
+    assert updated["recovery_status"] == "RECOVERED"
+    assert updated["recovered_payment_id"] == "pay_real_link_capture"
+
+
+def test_payment_link_event_rejects_multiple_active_bindings() -> None:
+    from main import app
+    from app.repositories import database
+
+    app.state.razorpay_client = VerifiedGateway()
+    client = TestClient(app)
+    _link_case(database, "pay_ambiguous_link_one", "order_ambiguous_link_one")
+    _link_case(database, "pay_ambiguous_link_two", "order_ambiguous_link_two")
+    event = {
+        "id": "evt_ambiguous_link",
+        "event": "payment_link.paid",
+        "payload": {
+            "payment_link": {"entity": {"id": "plink_exact", "amount_paid": 50000, "currency": "INR"}},
+            "payment": {"entity": {"id": "pay_ambiguous_capture", "amount": 50000, "currency": "INR"}},
+        },
+    }
+
+    response = _webhook(client, event)
+
+    assert response.json()["recovered"] is False
+    assert database.get_case_by_payment_id("pay_ambiguous_link_one")["recovery_status"] == "LINK_CREATED"
+    assert database.get_case_by_payment_id("pay_ambiguous_link_two")["recovery_status"] == "LINK_CREATED"
+
+
 @pytest.mark.parametrize(
     ("event_id", "payment_link_id", "amount", "currency", "status"),
     [

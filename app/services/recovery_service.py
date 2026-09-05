@@ -147,7 +147,7 @@ def process_recovery_success_event(event_type: str, data: dict) -> tuple[Dict | 
     if matching_case.get("recovery_status") == "RECOVERED":
         return matching_case, False
     if (
-        matching_case.get("recovery_status") != "LINK_CREATED"
+        matching_case.get("recovery_status") not in {"LINK_CREATED", "RECOVERING"}
         or matching_case.get("action_taken") != "send_payment_reminder"
     ):
         logger.warning("Payment Link success rejected for case %s in state %s", matching_case["id"], matching_case.get("recovery_status"))
@@ -276,7 +276,11 @@ def reconcile_successful_payment_event(event_type: str, data: dict) -> tuple[Dic
     if matching_case.get("action_taken") == "retry_payment":
         retry_count = int(matching_case.get("retry_count") or 0)
         max_retries = int(matching_case.get("max_retries") or 0)
-        if matching_case.get("recovery_status") != "PENDING_RETRY" or retry_count < 1 or retry_count > max_retries:
+        if (
+            matching_case.get("recovery_status") not in {"PENDING_RETRY", "RECOVERING"}
+            or retry_count < 1
+            or retry_count > max_retries
+        ):
             logger.warning("Successful event rejected for invalid retry state on case %s", matching_case["id"])
             return matching_case, False
         recovery_source = recovery_source or "BOUNDED_RETRY"

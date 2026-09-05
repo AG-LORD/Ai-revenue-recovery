@@ -10,6 +10,7 @@ Only the methods required by the current codebase are exposed:
 
 * ``create_order`` – create a Razorpay order (used by the store checkout).
 * ``create_payment_link`` – generate a payment link for recovery.
+* ``fetch_payment_link`` – retrieve an existing payment link by ID.
 * ``verify_webhook_signature`` – validate Razorpay webhook signatures.
 """
 
@@ -29,6 +30,7 @@ class PaymentGateway(Protocol):
     ) -> Dict[str, Any]: ...
 
     def create_payment_link(self, payload: Dict[str, Any]) -> Dict[str, Any]: ...
+    def fetch_payment_link(self, payment_link_id: str) -> Dict[str, Any]: ...
     def verify_webhook_signature(self, body: bytes, signature: str, webhook_secret: str) -> bool: ...
 
 
@@ -52,6 +54,9 @@ class UnavailableRazorpayClient:
         self._unavailable()
 
     def create_payment_link(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        self._unavailable()
+
+    def fetch_payment_link(self, payment_link_id: str) -> Dict[str, Any]:
         self._unavailable()
 
     def verify_webhook_signature(self, body: bytes, signature: str, webhook_secret: str) -> bool:
@@ -95,6 +100,10 @@ class RazorpayClient:
         ``payload`` is passed directly to ``client.payment_link.create``.
         """
         return self._client.payment_link.create(data=payload)
+
+    def fetch_payment_link(self, payment_link_id: str) -> Dict[str, Any]:
+        """Fetch an existing Payment Link from Razorpay."""
+        return self._client.payment_link.fetch(payment_link_id)
 
     def verify_webhook_signature(self, body: bytes, signature: str, webhook_secret: str) -> bool:
         """Verify Razorpay webhook signature."""

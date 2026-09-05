@@ -217,4 +217,26 @@ def resolve_event_merchant(event: dict) -> dict | None:
     original_payment_id = notes.get("original_payment_id")
     if not original_payment_id:
         original_payment_id = payment.get("notes", {}).get("original_payment_id")
-    return get_merchant_by_payment_id(original_payment_id)
+    merchant = get_merchant_by_payment_id(original_payment_id)
+    if merchant:
+        return merchant
+
+    payment_link_id = payment_link.get("id")
+    if payment_link_id:
+        conn = get_connection()
+        try:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT m.id, m.merchant_key, m.business_name,
+                                m.razorpay_account_id, m.status, m.created_at
+                FROM merchant_accounts m
+                JOIN recovery_cases c ON c.merchant_account_id = m.id
+                WHERE c.payment_link_id = ? AND m.status = 'ACTIVE'
+                """,
+                (payment_link_id,),
+            ).fetchall()
+        finally:
+            conn.close()
+        if len(rows) == 1:
+            return dict(rows[0])
+    return None

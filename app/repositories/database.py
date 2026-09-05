@@ -736,7 +736,11 @@ def find_case_for_recovery_event(order_id: str = None, payment_link_id: str = No
     try:
         row = None
         if payment_link_id:
-            row = conn.execute("SELECT * FROM recovery_cases WHERE payment_link_id = ? ORDER BY id DESC LIMIT 1", (payment_link_id,)).fetchone()
+            rows = conn.execute(
+                "SELECT * FROM recovery_cases WHERE payment_link_id = ? ORDER BY id DESC",
+                (payment_link_id,),
+            ).fetchall()
+            row = rows[0] if len(rows) == 1 else None
         if not row and original_payment_id:
             row = conn.execute("SELECT * FROM recovery_cases WHERE payment_id = ? ORDER BY id DESC LIMIT 1", (original_payment_id,)).fetchone()
         if not row and order_id:

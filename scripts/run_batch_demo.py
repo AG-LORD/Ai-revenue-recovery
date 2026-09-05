@@ -199,7 +199,7 @@ def build_batch_report(seed: int | None = DEFAULT_SEED) -> dict[str, Any]:
         total_recovered_paisa += case["recovered_amount"]
         retries += int(case["action_taken"] == "retry_payment")
         retry_attempts += int(case["retry_count"])
-        links += int(bool(case["payment_link_url"]))
+        links += int(case["action_taken"] == "send_payment_reminder")
         escalations += int(case["recovery_status"] == "ESCALATED")
         recoveries += int(case["recovery_status"] == "RECOVERED")
         expected_action = expected_actions.get(category)

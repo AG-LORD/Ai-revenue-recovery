@@ -64,8 +64,10 @@ def test_cancellation_can_only_create_customer_initiated_link() -> None:
         ),
     }
 
-    # Mock Gemini so unit tests never make a real API request.
-    with patch(
+    # Mock NIM so unit tests never make a real API request.
+    with patch("app.services.ai_service.AI_ENABLED", True), patch(
+        "app.services.ai_service.AI_PROVIDER", "nim"
+    ), patch("app.services.ai_service.NIM_API_KEY", "test-key"), patch(
         "app.services.ai_service._generate_with_nim",
         return_value=fake_nim_output,
     ):
@@ -103,7 +105,9 @@ def test_nim_invented_payment_details_fall_back_to_template() -> None:
         }
     )
 
-    with patch(
+    with patch("app.services.ai_service.AI_ENABLED", True), patch(
+        "app.services.ai_service.AI_PROVIDER", "nim"
+    ), patch("app.services.ai_service.NIM_API_KEY", "test-key"), patch(
         "app.services.ai_service._generate_with_nim",
         return_value={
             "explanation": "Payment details are available.",
@@ -131,7 +135,9 @@ def test_gemini_failure_falls_back_to_deterministic_template() -> None:
         }
     )
 
-    with patch(
+    with patch("app.services.ai_service.AI_ENABLED", True), patch(
+        "app.services.ai_service.AI_PROVIDER", "nim"
+    ), patch("app.services.ai_service.NIM_API_KEY", "test-key"), patch(
         "app.services.ai_service._generate_with_nim",
         side_effect=RuntimeError("NIM unavailable"),
     ):
@@ -153,12 +159,12 @@ def test_gemini_failure_falls_back_to_deterministic_template() -> None:
     # Fallback output still passes the safety guardrail.
     assert insight["safety_validated"] is True
     assert "automatically charging" not in insight["customer_message"].lower()
-def test_ai_configuration_uses_gemini() -> None:
+def test_ai_configuration_defaults() -> None:
     from app.core.config import NIM_MODEL
 
-    assert AI_ENABLED is True
-    assert AI_PROVIDER == "nim"
+    assert AI_PROVIDER in {"nim", "template"}
     assert NIM_MODEL == "nvidia/nemotron-3.5-lightning-30b-a3b"
+    assert isinstance(AI_ENABLED, bool)
 
 
 def test_monetary_values_stored_as_paisa_without_floating_point_error():

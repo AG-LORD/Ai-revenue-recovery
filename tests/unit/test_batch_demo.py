@@ -82,10 +82,13 @@ def test_reset_demo_records_preserves_unrelated_cases(mock_nim) -> None:
         "error_description": "Temporary issue with the issuing bank.",
     }
 
-    process_failed_payment(
-        unrelated_payment,
-        UnavailableRazorpayClient(),
-    )
+    with patch("app.services.ai_service.AI_ENABLED", True), patch(
+        "app.services.ai_service.AI_PROVIDER", "nim"
+    ), patch("app.services.ai_service.NIM_API_KEY", "test-key"):
+        process_failed_payment(
+            unrelated_payment,
+            UnavailableRazorpayClient(),
+        )
 
     run_batch_demo.process_batch(
         run_batch_demo.generate_synthetic_failures()
@@ -101,7 +104,7 @@ def test_reset_demo_records_preserves_unrelated_cases(mock_nim) -> None:
         if case["payment_id"].startswith("demo_batch_v1_")
     ]
 
-    # 1 unrelated case + 50 demo cases.
+    # 1 unrelated case + 50 demo cases; the batch itself is offline.
     assert mock_nim.call_count == 1
 
 

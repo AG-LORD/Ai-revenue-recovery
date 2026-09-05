@@ -1,311 +1,816 @@
-# AI Revenue Recovery
+# Revive — Revenue Recovery Operations
 
-## Problem
+> **Recover what is safe to recover. Stop when payment ownership cannot be proven.**
 
-Payment failures create revenue at risk. Retrying every failure automatically
-is unsafe: it can repeat unsuccessful attempts and create a poor customer
-experience.
+Revive is a policy-governed payment recovery system built for the Razorpay AI Buildathon Track 03 — AI Revenue Recovery.
 
-## Solution
+It detects failed payments, determines why they failed, applies a deterministic recovery policy, executes only the authorized action, and counts revenue as recovered only after successful payment evidence is reconciled server-side.
 
-AI Revenue Recovery is a FastAPI + SQLite demonstration of a bounded recovery
-workflow that:
+The key design boundary is simple:
 
-1. detects payment failures
-2. derives canonical payment lifecycle state
-3. diagnoses failures deterministically
-4. applies a deterministic policy gate
-5. executes only the persisted, authorized action
-6. uses NVIDIA NIM for explanation and customer communication
-7. reconciles successful payment capture
-8. measures captured, recovered, and still-at-risk revenue
-9. records an auditable decision trail
+> **Policy decides. AI explains. Razorpay confirms.**
 
-The project uses Razorpay Test Mode when credentials are configured. It also
-includes controlled simulations and an offline synthetic batch experiment.
+---
 
-## What Broke — And How We Got Out
+## Why Revive exists
 
-During real Razorpay Test Mode integration, we found that a Payment Link
-could appear usable while already being associated with an older recovery
-case. We also encountered webhook-tunnel failures during live testing.
+A failed payment is not one problem.
 
-We did not weaken financial reconciliation to make the demo pass.
+A temporary issuer failure may be safe to retry once. A customer who explicitly cancelled should not be retried automatically. An unknown or ambiguous failure should stop and go to manual review.
 
-Instead, the system was hardened to fail closed:
-- an already locally bound Payment Link is rejected;
-- existing recovery metadata in Razorpay notes is rejected;
-- amount and currency must match;
-- successful recovery requires validated payment/link identity;
-- ambiguous matches are recorded but never attributed to a recovery case.
+A recovery system therefore needs to answer five questions in order:
 
-The webhook issue was isolated to the transport layer rather than being
-"fixed" by weakening payment validation. We replaced the failed tunnel and
-verified that Razorpay events reached the same FastAPI webhook handler.
+```text
+Did the payment fail?
+        ↓
+Why did it fail?
+        ↓
+What recovery action is permitted?
+        ↓
+Did we execute only that action?
+        ↓
+Did Razorpay actually confirm the money?
+```
 
-These failures improved the system's core principle: recover revenue when it
-is safe to do so, and stop when payment ownership cannot be proven.
+Revive is designed around that sequence rather than around blind retries or autonomous LLM decisions.
 
-## Why AI — and Why Not AI for Money Movement
+---
 
-The system does **not** ask an LLM, “Should we retry this payment?”
+## What is real vs. synthetic?
 
-AI is used only for:
+The repository intentionally contains both live Razorpay Test Mode flows and controlled simulations so the project can be reproduced without depending on an external payment event every time.
 
-- explaining a diagnosed case
-- drafting customer communication
-- producing an internal note
+| Flow | Mode | What it demonstrates |
+|---|---|---|
+| Bounded retry + Razorpay Checkout | **Real Razorpay Test Mode** | Failed payment → policy → one retry → real payment confirmation |
+| Payment Link recovery | **Razorpay Test Mode / controlled configuration** | Reminder path and Payment Link reconciliation |
+| Cancellation demo | **Synthetic controlled demo** | Safe cancellation branch without requiring a live Payment Link |
+| 50-case batch | **Synthetic deterministic experiment** | Recovery accounting, guardrails, and audit behavior across volume |
 
-Deterministic application code controls:
+The synthetic batch is explicitly **not** production performance and is not a claim about real-world Razorpay recovery rates.
 
-- diagnosis classification
-- recovery authorization
-- retry limits
-- cancellation handling
-- manual escalation
-- payment-link behavior
-- successful-payment reconciliation
-- revenue accounting
+---
 
-The invariant is:
+## Product workflow
+
+The system follows this pipeline:
+
+```text
+Razorpay webhook / controlled simulation
+                ↓
+        Payment Event Ledger
+                ↓
+      Canonical Payment Lifecycle
+                ↓
+       Deterministic Diagnosis
+                ↓
+        Deterministic Policy Gate
+                ↓
+      Persist authorized action
+             ↙       ↘
+     AI explanation   Recovery execution
+                           ↓
+              Razorpay payment success
+                           ↓
+            Strict reconciliation
+                           ↓
+            Metrics + audit trail
+```
+
+### The financial invariant
+
+The most important invariant in the system is:
 
 ```text
 diagnosis → policy → persisted action_taken → recovery
 ```
 
-The recovery service executes the persisted policy action. AI cannot authorize
-or execute a financial action.
+The financial recovery service does **not** ask the model what to do. It reads the already-authorized `action_taken` value and executes that path.
 
-## Architecture
+This means AI can be unavailable, malformed, disabled, or unsafe without becoming the authority for money movement.
 
-```mermaid
-flowchart TD
-    A[Razorpay webhook / controlled simulation] --> B[Payment Event Ledger]
-    B --> C[Canonical Payment Lifecycle]
-    C --> D[Deterministic Diagnosis]
-    D --> E[Deterministic Policy Gate]
-    E --> F[Persist Authorized action_taken]
-    F --> G[AI Communication Layer<br/>explanation only]
-    F --> H[Bounded Recovery Execution]
-    H --> I[payment.captured / order.paid]
-    I --> J[Strict Recovery Reconciliation]
-    J --> K[Revenue Metrics + Audit Trail]
-```
+---
 
-AI is deliberately a communication layer between policy persistence and the
-user-facing/internal explanation. It is not the financial authority.
+## Recovery decisions
 
-## Payment Lifecycle
+Revive currently uses a deterministic three-way failure taxonomy:
 
-The `payment_events` ledger records lifecycle events without replacing the
-existing webhook idempotency table.
+| Diagnosis | Typical meaning | Authorized path |
+|---|---|---|
+| `temporary_issuer_failure` | Temporary bank/issuer/technical problem | **One bounded retry** |
+| `customer_cancelled` | Customer cancelled during checkout | **Reminder / Payment Link** |
+| `unknown_failure` | Unclassified or insufficient evidence | **Manual review** |
 
-| Event/state | Meaning |
-|---|---|
-| `payment.failed` | Failure evidence that can create a recovery case |
-| `payment.authorized` | Authorization evidence, but not captured revenue |
-| `payment.captured` | Authoritative successful payment evidence |
-| `order.paid` | Successful lifecycle evidence when capture is unavailable |
-| `payment_link.paid` | Successful payment-link recovery event |
-| `CHECKOUT_ABANDONED` | Checkout was dismissed; it is not proof of payment failure |
-
-`payment.captured` and `order.paid` are canonicalized so one successful
-payment cannot double-count revenue. Simulation events are stored with
-`source=simulation`; real Razorpay webhooks use
-`source=razorpay_webhook`. The checkout success callback is not authoritative:
-the frontend waits for server-confirmed lifecycle state.
-
-## Diagnosis
-
-The deterministic taxonomy has three categories:
-
-- `temporary_issuer_failure`
-- `customer_cancelled`
-- `unknown_failure`
-
-Strong evidence of a temporary issuer, bank, gateway, or technical problem can
-enter the retryable policy path. Explicit customer cancellation permits a
-reminder/payment-link path, not automatic retry. Ambiguous or generic failures
-become `unknown_failure` and go to manual review. Uncertainty intentionally
-defaults toward safety; this is not probabilistic ML diagnosis.
-
-## Policy & Safety
-
-Diagnosis recommends a path but does not authorize it. The policy gate persists
-the authorized `action_taken`, and recovery executes only that value.
-
-Safety rules include:
+Safety rules are intentionally conservative:
 
 - retries are bounded by the case maximum
-- customer cancellations never receive automatic retry
-- unknown failures escalate to manual review
-- recovered cases are not processed again
+- customer cancellations are never automatically retried
+- unknown failures escalate instead of guessing
+- recovered cases are terminal
 - duplicate success signals cannot increase recovered revenue
-- policy violations are calculated from persisted case state
+- ambiguous successful payments are recorded but not attributed
+- amount and currency must match before recovery is recorded
 
-## AI / NVIDIA NIM
+When the system cannot prove ownership of a successful payment, it fails closed.
 
-The optional provider is NVIDIA NIM:
+---
 
-- Model: `nvidia/nemotron-3.5-lightning-30b-a3b`
-- Output: `summary`, `recommended_message`, `customer_action`, `internal_note`
+## What happens to a failed payment?
 
-NIM cannot authorize retries, change retry counts, choose amounts, create
-payment links, authorize refunds or credits, or claim recovery without
-verified payment state.
+### 1. Detect
 
-If NIM is disabled, unavailable, malformed, or unsafe, the application uses
-deterministic template communication and continues the recovery workflow.
+A `payment.failed` event is received from Razorpay or generated by a controlled simulation.
 
-## Revenue Accounting
+The event is recorded in the payment-event ledger with identifiers such as payment ID, order ID, amount, currency, status, and source.
 
-These measures are intentionally separate:
+### 2. Diagnose
 
-- **Captured Revenue**: all successfully captured payments
-- **Recovered Revenue**: previously at-risk revenue subsequently recovered
-- **Revenue Still at Risk**: unresolved at-risk recovery cases
-
-For recovery cases, the accounting identity is:
+The diagnosis service examines the stored failure evidence and classifies the case deterministically:
 
 ```text
-revenue_at_risk =
-revenue_recovered + revenue_still_at_risk
+issuer / temporary technical evidence → temporary_issuer_failure
+explicit customer cancellation        → customer_cancelled
+anything uncertain                     → unknown_failure
 ```
 
-Amounts are stored and reconciled internally as integer paise, then converted
-to rupees for presentation. A normal successful payment contributes to
-Captured Revenue but not Recovered Revenue unless it safely matches an
-existing at-risk case.
+This is rule-based diagnosis, not probabilistic ML classification.
 
-Successful reconciliation uses strict identifiers:
+### 3. Decide
+
+The policy service converts the diagnosis into a concrete action such as:
+
+```text
+ALLOW_RETRY
+ALLOW_REMINDER
+ESCALATE_MANUAL_REVIEW
+```
+
+The authorized `action_taken` is persisted before financial recovery execution and before AI-generated explanation is used.
+
+### 4. Communicate
+
+Optional NVIDIA NIM output explains the diagnosed case and can draft customer-facing/internal communication.
+
+AI may produce:
+
+- a case summary
+- a recommended customer message
+- a suggested customer action
+- an internal note
+
+AI may **not**:
+
+- authorize a retry
+- choose the retry count
+- change the amount
+- create a payment link as a financial authorization
+- authorize refunds or credits
+- claim that money was recovered
+
+### 5. Recover
+
+The recovery service executes the persisted policy decision.
+
+For the bounded retry path, the flow is:
+
+```text
+PENDING_RETRY
+    ↓
+Razorpay Checkout
+    ↓
+payment.captured / order.paid
+    ↓
+strict reconciliation
+    ↓
+RECOVERED
+```
+
+For the customer-cancellation path, the system creates or reuses an authorized reminder/Payment Link path rather than retrying automatically.
+
+### 6. Reconcile
+
+A payment is not considered recovered simply because the browser says success.
+
+The server waits for authoritative payment evidence and resolves the new payment against the existing recovery opportunity.
+
+Matching uses strict identifiers and scoped candidates:
 
 1. exact `payment_id`
 2. `order_id` only when the match is unambiguous
-3. never amount-only matching
-4. never customer-only matching
-5. never fuzzy matching
+3. exact amount comparison
+4. exact currency comparison
+5. merchant scope
+6. no amount-only matching
+7. no customer-only matching
+8. no fuzzy matching
 
-An ambiguous success remains in the lifecycle ledger but does not incorrectly
-mark a recovery case as recovered.
+If more than one unresolved recovery candidate could match, none is selected.
 
-## 50-Case Synthetic Demo
+### 7. Measure
 
-The batch is a **synthetic / controlled experiment**, not production
-performance and not a claim about Razorpay recovery rates. It uses a fixed
-seed, deterministic scenario generation, and deterministic synthetic recovery
-confirmations.
+Revive keeps these values separate:
 
-It reports:
+- **Captured Revenue** — all successful captured payments
+- **Revenue at Risk** — amount attached to unresolved recovery opportunities
+- **Recovered Revenue** — previously at-risk revenue proven to have recovered
+- **Still at Risk** — unresolved at-risk revenue
 
-- payments processed
-- revenue at risk
-- diagnosis distribution
-- authorized retries, reminders, and manual reviews
-- retry attempts
-- successful recoveries
-- recovered revenue
-- revenue still at risk
-- recovery rate
-- policy violations
+For recovery cases:
 
-The default seed is `20260829`. Run from the repository root:
+```text
+revenue_at_risk = revenue_recovered + revenue_still_at_risk
+```
+
+Amounts are stored internally as integer paise and presented as rupees.
+
+---
+
+## Auditability and state safety
+
+Every important transition is designed to leave an audit trail.
+
+A typical recovery story is:
+
+```text
+FAILURE DETECTED
+      ↓
+DIAGNOSIS CREATED
+      ↓
+POLICY DECISION PERSISTED
+      ↓
+RECOVERY ACTION INITIATED
+      ↓
+SUCCESS EVENT RECEIVED
+      ↓
+IDENTITY / AMOUNT / CURRENCY VALIDATED
+      ↓
+RECOVERED
+```
+
+The database also prevents terminal recovered cases from being processed as new recovery opportunities.
+
+This matters because payment systems are event-driven: the same business event may be delivered more than once, and a successful payment may arrive with a different payment ID from the original failed payment.
+
+---
+
+## The engineering lesson: fail closed
+
+One of the most important implementation discoveries happened during real Razorpay Test Mode testing.
+
+A Payment Link could appear reusable while already being associated with an older recovery case. We also encountered webhook tunnel failures during live testing.
+
+We did not weaken reconciliation just to make the demo succeed.
+
+Instead we hardened the system to reject unsafe states:
+
+- locally bound Payment Links are rejected
+- existing recovery metadata is checked
+- amount and currency must match
+- recovery identity must be validated
+- ambiguous matches are not attributed
+- transport failures are isolated from financial validation logic
+
+That led to a stronger principle throughout the codebase:
+
+> **When ownership of the money cannot be proven, stop the automated recovery.**
+
+---
+
+## 50-case controlled batch experiment
+
+The repository includes a deterministic offline experiment that pushes 50 synthetic failed payments through the same recovery workflow.
+
+Run it from the repository root with:
 
 ```powershell
-python -m scripts.run_batch_demo
+python -m scripts.run_batch_demo --reset-demo
+```
+
+The current reproducible default result is:
+
+| Metric | Result |
+|---|---:|
+| Payments processed | **50** |
+| Revenue at risk | **₹22,250** |
+| Temporary issuer failures | **19** |
+| Customer cancellations | **19** |
+| Unknown failures | **12** |
+| Bounded retries authorized | **19** |
+| Payment-link/reminder actions | **19** |
+| Manual escalations | **12** |
+| Successful recoveries | **9** |
+| Revenue recovered | **₹4,250** |
+| Revenue still at risk | **₹18,000** |
+| Recovery rate | **19.1%** |
+| Audit events | **278** |
+| Policy violations | **0** |
+
+These numbers are **synthetic / controlled and reproducible with the default seed `20260829`**. They demonstrate workflow behavior and accounting consistency, not production recovery performance.
+
+### Other batch commands
+
+```powershell
+# Machine-readable report
 python -m scripts.run_batch_demo --json
+
+# Re-run with another deterministic seed
 python -m scripts.run_batch_demo --seed 12345 --json
 ```
 
-The JSON report includes `mode=synthetic_demo`,
-`recovery_mode=synthetic_confirmation`, seed, paise fields, presentation
-values in rupees, and the accounting/policy results.
+The report includes the recovery mode and presentation units so synthetic results are distinguishable from live financial results.
 
-## Judge Demo
+---
 
-1. Open `/dashboard`.
-2. Show Revenue at Risk, Captured Revenue, Recovered Revenue, Still at Risk,
-   Recovery Rate, and Cases Processed.
-3. Point out **CONTROLLED FAILURE SIMULATION**.
-4. Trigger a temporary issuer failure.
-5. Show deterministic diagnosis and the policy-authorized bounded retry.
-6. Use the recovery simulation or a confirmed payment event.
-7. Show the case transition to **RECOVERED** and the recovered amount.
-8. Open the audit trail and follow detection → diagnosis → policy → action →
-   payment success → recovery confirmation.
-9. Run the 50-case demo and show its **SYNTHETIC DEMO** result card, seed,
-   accounting, recovery mode, and policy-violation count.
-10. Point out that AI explains and drafts communication; policy controls money
-    movement.
+## Running Revive locally
 
-The checkout page is a Razorpay Test Mode flow. Its client callback says
-“Payment submitted” and waits for backend confirmation; dismissing the modal
-means `CHECKOUT_ABANDONED`, not `payment.failed`.
+### Prerequisites
 
-## Setup
+- Python **3.11+**
+- Git
+- Optional: Razorpay Test Mode credentials for the live checkout flow
+- Optional: NVIDIA NIM credentials for live AI communication
 
-The project expects Python 3.11+ and has been developed with a local virtual
-environment.
+### 1. Clone the repository
+
+```powershell
+git clone https://github.com/AG-LORD/Ai-revenue-recovery.git
+cd Ai-revenue-recovery
+```
+
+### 2. Create a virtual environment
+
+Windows PowerShell:
 
 ```powershell
 python -m venv venv
 .\venv\Scripts\Activate.ps1
+```
+
+Install dependencies:
+
+```powershell
 python -m pip install -r requirements.txt
+```
+
+### 3. Configure environment variables
+
+Create your local environment file:
+
+```powershell
 Copy-Item .env.example .env
+```
+
+Then fill in the credentials you actually have.
+
+| Variable | Required for | Purpose |
+|---|---|---|
+| `RAZORPAY_KEY_ID` | Live Razorpay checkout | Razorpay Test Mode public key |
+| `RAZORPAY_KEY_SECRET` | Live Razorpay checkout | Razorpay Test Mode secret |
+| `RAZORPAY_WEBHOOK_SECRET` | Live webhook verification | Verifies Razorpay webhook signatures |
+| `RAZORPAY_DEMO_PAYMENT_LINK_ID` | Optional | Controlled Payment Link configuration |
+| `RAZORPAY_DEMO_PAYMENT_LINK_URL` | Optional | Controlled Payment Link URL |
+| `AI_ENABLED` | Optional | Enables/disables AI communication |
+| `AI_PROVIDER` | Optional | `nim` for NVIDIA NIM |
+| `NIM_API_KEY` | Optional | NVIDIA NIM API key |
+| `NIM_MODEL` | Optional | NIM model name |
+| `NIM_BASE_URL` | Optional | NIM-compatible API base URL |
+
+The checked-in `.env.example` intentionally keeps `AI_ENABLED=false` and does not contain real credentials. fileciteturn432file0
+
+### 4. Start the application
+
+```powershell
 python -m uvicorn main:app --reload
 ```
 
 Open:
 
-- Dashboard: `http://127.0.0.1:8000/`
-- Checkout: `http://127.0.0.1:8000/checkout`
+- **Dashboard:** `http://127.0.0.1:8000/`
+- **Checkout:** `http://127.0.0.1:8000/checkout`
 
-Configuration is loaded from `.env`:
+### 5. Verify the service
 
-| Variable | Purpose |
-|---|---|
-| `RAZORPAY_KEY_ID` | Razorpay Test Mode public key |
-| `RAZORPAY_KEY_SECRET` | Razorpay Test Mode server secret |
-| `RAZORPAY_WEBHOOK_SECRET` | Webhook signature verification secret |
-| `AI_ENABLED` | Set `true` to enable optional NIM communication |
-| `AI_PROVIDER` | Use `nim` for NVIDIA NIM |
-| `NIM_API_KEY` | Local NVIDIA NIM API key |
-| `NIM_MODEL` | NIM model name |
-| `NIM_BASE_URL` | NIM-compatible API base URL |
-| `DATABASE_PATH` | Optional SQLite database path; defaults to `revenue_recovery.db` |
+Open:
 
-NIM is optional. With `AI_ENABLED=false`, deterministic template fallback
-remains available. Never commit `.env` or real API keys.
+```text
+http://127.0.0.1:8000/health
+```
+
+Expected response:
+
+```json
+{"status":"healthy"}
+```
+
+---
+
+## How to demonstrate the project
+
+The dashboard is the fastest way to understand the product.
+
+### Recommended demo order
+
+**1. Start on the dashboard**
+
+Show the high-level metrics and the flow:
+
+```text
+DETECT → DIAGNOSE → DECIDE → RECOVER → MEASURE
+```
+
+**2. Trigger the real bounded retry path**
+
+Use the real Razorpay Test Mode flow to show:
+
+```text
+failed payment
+→ deterministic diagnosis
+→ ALLOW_RETRY
+→ one bounded retry
+→ Razorpay Checkout
+→ server-confirmed success
+→ RECOVERED
+```
+
+**3. Open the case audit trail**
+
+Show the evidence chain from the original failure through the policy decision and final recovery confirmation.
+
+**4. Show the AI boundary**
+
+The key message is:
+
+> AI explains the recovery decision; deterministic policy controls the money.
+
+**5. Run the batch evidence**
+
+Show the 50-case synthetic result and explicitly label it **synthetic / controlled**.
+
+### Controlled dashboard scenarios
+
+The dashboard includes controlled scenarios for:
+
+- **Bank Glitch — Real Retry Flow**
+- **Customer Cancelled — Synthetic Link Flow**
+- **Pay Synthetic Link — Recover ₹500**
+- **Run 50-Case Batch Demo**
+
+The synthetic controls are intentionally available so the product can be demonstrated without fabricating a real payment event.
+
+---
+
+## API surface
+
+The current FastAPI router exposes endpoints for health, metrics, cases, payment activity, simulation, checkout order creation, and batch execution. fileciteturn434file0
+
+Common endpoints include:
+
+```text
+GET  /health
+GET  /api/metrics
+GET  /api/cases
+GET  /api/cases/{payment_id}
+GET  /api/payment-activity
+GET  /cases/{payment_id}/audit
+POST /api/create-order
+POST /api/simulate
+POST /api/demo/run-batch
+```
+
+The `/api/simulate` endpoint is deliberately a controlled demo path: it exercises the same recovery workflow while skipping live webhook signature verification for the simulated request. fileciteturn434file0
+
+For live Razorpay traffic, webhook handling remains server-side and uses the configured webhook secret.
+
+---
+
+## Knowledge transfer: where to look in the codebase
+
+A new developer should understand the project in this order rather than reading every file.
+
+### 1. `app/api/router.py`
+
+Start here to see how HTTP/webhook requests enter the application.
+
+Key responsibilities:
+
+- API endpoints
+- controlled simulation endpoint
+- checkout order creation
+- case/metrics/payment activity reads
+- routing successful payment events into recovery/reconciliation services
+
+### 2. `app/services/workflow_service.py`
+
+This is the orchestration layer for a failed payment.
+
+Conceptually:
+
+```text
+failed payment
+→ persist lifecycle evidence
+→ diagnose
+→ apply policy
+→ persist action_taken
+→ generate AI explanation
+→ execute authorized recovery
+```
+
+The important point is that `action_taken` is committed before recovery execution.
+
+### 3. `app/services/diagnosis_service.py`
+
+Defines the deterministic failure taxonomy and converts payment failure evidence into one of the supported diagnosis categories.
+
+When changing diagnosis logic, always check that every diagnosis still maps to an explicit safe policy outcome.
+
+### 4. `app/services/policy_service.py`
+
+Owns the financial decision boundary.
+
+This is where you should look when asking:
+
+> “What is Revive actually allowed to do for this failure?”
+
+Policy should remain deterministic and independently testable.
+
+### 5. `app/services/recovery_service.py`
+
+Owns execution and successful-payment reconciliation.
+
+This is the main file to inspect for:
+
+- retry bounds
+- Payment Link creation behavior
+- recovery-state transitions
+- exact payment matching
+- amount/currency checks
+- merchant scoping
+- safe failure behavior
+
+### 6. `app/services/ai_service.py`
+
+This is the communication layer, not the financial authority.
+
+The expected contract is explanation/communication output only. It must never be used as the source of truth for recovery authorization.
+
+### 7. `app/repositories/database.py`
+
+Owns persistence of:
+
+- payment events
+- recovery cases
+- audit records
+- recovery metrics
+- lifecycle state
+
+When debugging an unexpected result, inspect persisted state rather than relying only on frontend text.
+
+### 8. `scripts/run_batch_demo.py`
+
+This is the reproducible 50-case controlled experiment.
+
+It deliberately uses an unavailable Razorpay client and synthetic confirmation events so the accounting experiment does not depend on live credentials. The script generates seeded failures, pushes them through the normal workflow, then computes its report from persisted records. fileciteturn430file0
+
+### 9. `frontend/dashboard.html`
+
+This is the judge-facing operational view.
+
+Keep the dashboard focused on:
+
+```text
+Revenue at Risk
+Recovered Revenue
+Captured Revenue
+Still at Risk
+Cases Processed
+Recovery Rate
+```
+
+and on making the recovery state easy to verify.
+
+---
 
 ## Testing
 
-Run the existing suite from the repository root:
+Run the complete suite from the repository root:
 
 ```powershell
 python -m pytest -q
 ```
 
-Coverage includes payment lifecycle events, duplicate handling, deterministic
-diagnosis, policy safety, bounded recovery, successful-payment reconciliation,
-AI fallback and prompt-injection resistance, batch accounting, and API safety.
+The current baseline is:
 
-## Limitations / Future Work
+```text
+118 passed
+```
 
-- SQLite is intentionally retained for hackathon scope.
-- Batch recovery confirmations are synthetic and controlled.
-- Test Checkout is a demonstration flow, not production payment
-  infrastructure.
-- NIM is optional and communication-only.
-- A production deployment would need stronger operational infrastructure,
-  secrets management, monitoring, and a production database.
+The test suite covers payment lifecycle handling, duplicate events, diagnosis, policy safety, bounded recovery, successful-payment reconciliation, AI fallback/safety behavior, batch accounting, and API behavior.
 
-These are deliberate scope boundaries for a focused, auditable demonstration.
+For a clean contribution, run both:
 
-## Tech Stack
+```powershell
+python -m pytest -q
+python -m scripts.run_batch_demo --reset-demo
+```
 
-- Python
-- FastAPI
-- SQLite
-- Razorpay APIs and webhooks
-- NVIDIA NIM
-- HTML, CSS, and JavaScript
-- pytest
+A test pass is not enough if the batch report, dashboard, and persisted recovery state disagree. Treat those as separate verification surfaces.
+
+---
+
+## Failure modes and expected behavior
+
+| Situation | Expected behavior |
+|---|---|
+| Temporary issuer failure | Authorize at most the configured retry bound |
+| Customer cancellation | No automatic retry; use reminder/Payment Link path |
+| Unknown failure | Escalate for manual review |
+| Recovery already terminal | Do not process it again |
+| Duplicate success event | Do not double-count recovered revenue |
+| Amount mismatch | Reject reconciliation |
+| Currency mismatch | Reject reconciliation |
+| Ambiguous same-order match | Record the event but recover nothing automatically |
+| Payment gateway unavailable | Fail safely / escalate rather than invent success |
+| AI unavailable | Continue with deterministic communication fallback |
+| Browser checkout dismissed | Treat as `CHECKOUT_ABANDONED`, not proof of payment failure |
+
+This is intentional: uncertainty should reduce automation, not increase it.
+
+---
+
+## Production path: how this could become a real merchant system
+
+The current implementation is a focused buildathon demonstration. A production version would preserve the same financial boundary while replacing or expanding the infrastructure around it.
+
+### 1. Replace SQLite with a production database
+
+Move recovery cases, payment events, and audit records to PostgreSQL or another transactional store with:
+
+- stronger concurrency controls
+- migrations
+- backups
+- read replicas where appropriate
+- operational retention policies
+
+### 2. Introduce a durable event pipeline
+
+Put a queue/stream between webhook ingestion and workflow processing so burst traffic, retries, and worker restarts do not depend on one process.
+
+For example:
+
+```text
+Razorpay webhook
+      ↓
+Webhook ingress
+      ↓
+Durable queue
+      ↓
+Recovery workers
+      ↓
+Policy / execution
+      ↓
+Reconciliation
+```
+
+### 3. Make recovery policies merchant-configurable
+
+Keep the policy engine deterministic, but allow each merchant to define controlled parameters such as:
+
+- retry eligibility
+- retry limits
+- minimum/maximum transaction value
+- eligible payment methods
+- reminder timing
+- escalation destinations
+
+Store policy versions with every recovery decision so an operator can later answer:
+
+> “Which exact policy authorized this action?”
+
+### 4. Add stronger operational observability
+
+Production operations should expose:
+
+- recovery latency
+- webhook delivery failures
+- reconciliation rejection reasons
+- recovery success by diagnosis category
+- recovery success by payment method
+- policy-blocked cases
+- queue lag
+- AI availability/fallback rate
+
+### 5. Add operator workflows
+
+A real merchant system should provide a support/review queue for cases that are intentionally not automated.
+
+Operators should be able to see:
+
+- why automation stopped
+- what evidence was observed
+- what policy was applied
+- what action was blocked
+- what payment events have arrived since
+
+### 6. Add stronger security controls
+
+Production deployment should add:
+
+- managed secrets
+- role-based access control
+- webhook secret rotation
+- encrypted storage where required
+- structured security logging
+- stricter request validation
+- controlled access to customer/payment data
+
+### 7. Add policy simulation before deployment
+
+A useful production feature would let merchants test a proposed policy against historical failed-payment data before activating it.
+
+The simulator should answer:
+
+```text
+How many payments would be retried?
+How much revenue would be exposed to retries?
+How many cases would escalate?
+How many cases remain unresolved?
+Would any existing safety invariant be violated?
+```
+
+### 8. Add recovery experiments with real historical outcomes
+
+The synthetic batch is useful for deterministic testing. A production system could add anonymized historical evaluation to measure:
+
+- recovery lift by diagnosis
+- retry success probability
+- customer response to reminders
+- revenue recovered per intervention
+- false-positive recovery attempts
+- policy-blocked revenue opportunities
+
+The important constraint would remain: historical modeling can inform policy design, but production money movement should remain behind deterministic authorization controls.
+
+### 9. Keep AI bounded as the system grows
+
+Future AI capabilities could improve:
+
+- explanation quality
+- customer messaging
+- operator summaries
+- prioritization of manual-review queues
+- trend analysis across failure categories
+
+The financial boundary should remain unchanged:
+
+```text
+AI suggests / explains
+        ↓
+Deterministic policy validates
+        ↓
+Persist authorization
+        ↓
+Execution
+        ↓
+Server-side reconciliation
+```
+
+---
+
+## Known limitations
+
+- SQLite is used intentionally for hackathon scope.
+- The batch experiment uses synthetic failures and synthetic recovery confirmations.
+- The dashboard's cancellation flow includes controlled simulation behavior.
+- Live Razorpay checkout requires valid Test Mode credentials.
+- NVIDIA NIM is optional and used only for communication/explanation.
+- Production deployment would require stronger operational, security, data-retention, and observability infrastructure.
+
+These limitations are deliberate scope boundaries, not hidden assumptions.
+
+---
+
+## Tech stack
+
+- **Python 3.11+**
+- **FastAPI**
+- **SQLite**
+- **Razorpay Test Mode APIs + webhooks**
+- **NVIDIA NIM** for optional AI communication
+- **HTML / CSS / JavaScript**
+- **pytest**
+
+---
+
+## Project principles
+
+Revive is built around a small set of rules that should survive future refactors:
+
+1. **Never let AI authorize financial action.**
+2. **Never call money recovered without server-confirmed evidence.**
+3. **Never guess when reconciliation is ambiguous.**
+4. **Keep successful normal payments separate from recovered at-risk revenue.**
+5. **Bound automated retries.**
+6. **Make important decisions auditable.**
+7. **Prefer a safe escalation to an unsafe recovery.**
+
+That is the core idea behind Revive: **revenue recovery should be automated where it is provably safe, and deliberately stopped where it is not.**

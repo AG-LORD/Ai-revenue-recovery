@@ -756,6 +756,28 @@ def find_case_for_recovery_event(order_id: str = None, payment_link_id: str = No
     return case
 
 
+def find_recovery_cases_by_payment_link_id(payment_link_id: str, merchant_account_id: int | None = None) -> list[dict]:
+    conn = get_connection()
+    try:
+        if merchant_account_id is None:
+            rows = conn.execute(
+                "SELECT * FROM recovery_cases WHERE payment_link_id = ? ORDER BY id ASC",
+                (payment_link_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM recovery_cases WHERE payment_link_id = ? AND merchant_account_id = ? ORDER BY id ASC",
+                (payment_link_id, merchant_account_id),
+            ).fetchall()
+        result = [dict(row) for row in rows]
+    finally:
+        conn.close()
+    for row in result:
+        row["amount"] = row["amount"] / 100.0
+        row["recovered_amount"] = row["recovered_amount"] / 100.0
+    return result
+
+
 def find_case_for_captured_payment(payment_id: str = None, order_id: str = None):
     conn = get_connection()
     try:

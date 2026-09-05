@@ -40,10 +40,40 @@ from app.repositories.database import (
     record_payment_event,
     retry_failed_payment_event,
     update_payment_event_status,
+    find_recovery_cases_by_payment_link_id,
 )
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _has_conflicting_recovery_metadata(notes: dict) -> bool:
+    """Check if Razorpay Payment Link notes contain recovery-binding metadata."""
+    if not isinstance(notes, dict):
+        return False
+
+    case_id = str(notes.get("case_id") or "").strip()
+    if case_id:
+        return True
+
+    original_payment_id = str(notes.get("original_payment_id") or "").strip()
+    if original_payment_id:
+        return True
+
+    recovery_source = str(notes.get("recovery_source") or "").strip().lower()
+    if recovery_source and (
+        recovery_source == "ai_revenue_recovery" or "recovery" in recovery_source
+    ):
+        return True
+
+    order_id = str(notes.get("order_id") or "").strip()
+    if order_id and (
+        order_id.startswith(("order_sim_", "demo_batch_order_", "recovery_"))
+        or "recovery" in order_id
+    ):
+        return True
+
+    return False
 
 
 class _DemoPaymentLinkGateway:
@@ -64,6 +94,7 @@ class _DemoPaymentLinkGateway:
         fetched_amount = fetched.get("amount")
         fetched_currency = fetched.get("currency")
         fetched_status = fetched.get("status")
+        fetched_notes = fetched.get("notes") or {}
         if fetched_id != RAZORPAY_DEMO_PAYMENT_LINK_ID:
             raise RuntimeError("Configured demo Payment Link ID was not returned by Razorpay")
         if not fetched_url:
@@ -79,6 +110,20 @@ class _DemoPaymentLinkGateway:
         expected_amount = payload.get("amount")
         if expected_amount is not None and fetched_amount != expected_amount:
             raise RuntimeError("Configured demo Payment Link amount does not match the simulation")
+
+        # 6. Check if Payment Link is already bound to a local recovery case
+        existing_cases = find_recovery_cases_by_payment_link_id(fetched_id)
+        if existing_cases:
+            raise RuntimeError(
+                "Configured demo Payment Link is already bound to a recovery case"
+            )
+
+        # 7 & 8. Check if Razorpay notes contain existing recovery metadata
+        if _has_conflicting_recovery_metadata(fetched_notes):
+            raise RuntimeError(
+                "Configured demo Payment Link contains existing recovery metadata"
+            )
+
         logger.info(
             "controlled_demo_payment_link_fetched id=%s url=%s status=%s amount=%s currency=%s",
             fetched_id,

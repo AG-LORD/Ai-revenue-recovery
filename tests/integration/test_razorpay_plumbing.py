@@ -219,3 +219,65 @@ def test_unknown_failure_simulation_creates_distinct_cases(monkeypatch) -> None:
     )
     assert first_replay.status_code == second_replay.status_code == 200
     assert second_replay.json()["status"] == "ignored"
+
+
+def test_demo_payment_link_rejects_existing_local_binding(monkeypatch) -> None:
+    from main import app
+    from app.repositories import database
+
+    router_module = importlib.import_module("app.api.router")
+    monkeypatch.setattr(router_module, "RAZORPAY_DEMO_PAYMENT_LINK_ID", "plink_already_bound")
+    app.state.razorpay_client = VerifiedGateway()
+
+    payment = {
+        "id": "pay_prebound_test",
+        "order_id": "order_prebound_test",
+        "amount": 50000,
+        "currency": "INR",
+    }
+    diagnosis = {"category": "customer_cancelled", "recoverable": True}
+    case, _ = database.create_or_get_recovery_case(payment, diagnosis)
+    database.update_case_recovery_action(
+        case_id=case["id"],
+        payment_id="pay_prebound_test",
+        recovery_status="LINK_CREATED",
+        action_result="PAYMENT_LINK_CREATED",
+        payment_link_id="plink_already_bound",
+        payment_link_url="https://rzp.io/rzp/prebound",
+    )
+
+    response = TestClient(app).post("/api/simulate", json={"scenario": "cancellation"})
+
+    assert response.status_code == 502
+    assert "Payment link creation failed" in response.json()["message"]
+
+    bound_cases = database.find_recovery_cases_by_payment_link_id("plink_already_bound")
+    assert len(bound_cases) == 1
+    assert bound_cases[0]["id"] == case["id"]
+
+
+def test_demo_payment_link_rejects_existing_razorpay_recovery_metadata(monkeypatch) -> None:
+    from main import app
+
+    router_module = importlib.import_module("app.api.router")
+    monkeypatch.setattr(router_module, "RAZORPAY_DEMO_PAYMENT_LINK_ID", "plink_metadata_test")
+
+    class MetadataLinkGateway(VerifiedGateway):
+        def fetch_payment_link(self, payment_link_id: str) -> dict:
+            return {
+                "id": payment_link_id,
+                "short_url": "https://rzp.io/rzp/meta",
+                "amount": 50000,
+                "currency": "INR",
+                "status": "created",
+                "notes": {
+                    "case_id": "793",
+                    "original_payment_id": "pay_existing",
+                },
+            }
+
+    app.state.razorpay_client = MetadataLinkGateway()
+    response = TestClient(app).post("/api/simulate", json={"scenario": "cancellation"})
+
+    assert response.status_code == 502
+    assert "Payment link creation failed" in response.json()["message"]
